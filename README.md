@@ -31,7 +31,8 @@ h     : Show this help
 
 ```bash 
 git clone https://github.com/lovechants/Aliyah.git 
-cargo build 
+cargo build
+pip install -e . 
 cargo run -- <script.py>
 ```
 ---
