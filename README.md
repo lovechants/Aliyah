@@ -36,6 +36,9 @@ cargo run -- <script.py>
 ```
 ---
 
+![MINST Rendering](example.png)
+
+---
 
 Roadmap to 1.0 alpha 
 
