@@ -9,13 +9,20 @@ Being able to see to see my model train and interact with it in the terminal is 
 Wrapper libary in `/python`
 
 
-Keyboard Controls 
+Keyboard Controls
+
 q/ESC : Quit
+
 p/SPACE: Pause/Resume training
+
 s     : Stop training
+
 e     : Toggle error log
+
 ↑/↓   : Scroll error log | Scroll training log 
+
 c     : Clear error log
+
 h     : Show this help
 
 ---
