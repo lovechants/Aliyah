@@ -1,0 +1,1359 @@
+#[allow(unused_imports)]
+#[allow(warnings)]
+#[allow(unused_variables)]
+
+use log::{debug, error, log_enabled, info, Level};
+use env_logger;
+use anyhow::Result;
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout, Rect, Margin},
+    style::{Color, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph, GraphType, Dataset, canvas::{Canvas, Context, Line as CanvasLine, Points}},
+    Terminal, Frame,
+    symbols::Marker,
+};
+use std::{
+    io::{self, BufRead, BufReader, Write},
+    process::{Child, Command as StdCommand, Stdio},
+    thread,
+    sync::mpsc,
+    collections::HashMap,
+    time::{Duration, Instant},
+    path::PathBuf,
+    error::Error,
+};
+use std::cmp::min;
+use std::fs::OpenOptions;
+use std::fmt;
+use sysinfo::{CpuExt, System, SystemExt};
+use clap::Parser;
+use aliyah::{ PythonRunner, MLFramework, ModelArchitecture};
+use aliyah::{ ScriptState, ScriptError };
+use aliyah::ScriptOutput;
+//use aliyah::IPCServer; 
+use aliyah::Update;
+//use aliyah::CommandServer;
+//use aliyah::UpdateServer;
+use aliyah::ZMQServer;
+use aliyah::Command;
+
+
+fn log_to_file(msg: &str) {
+    if let Ok(mut file) = OpenOptions::new() 
+        .create(true)
+        .append(true)
+        .open("/tmp/aliyah_debug.log")
+    {
+        let now = chrono::Local::now(); 
+        let _ = writeln!(file, "[{}] {}", now.format("%Y-%m-%d %H:%M:%S.%3f"), msg);
+    }
+}
+
+
+#[derive(Parser)]
+struct Cli {
+    #[arg(name = "SCRIPT")]
+    script: PathBuf,
+
+    #[arg(last = true)]
+    script_args: Vec<String>,
+
+    #[arg(short, long)]
+    debug: bool,
+}
+
+#[derive(Debug, Clone)]
+struct SystemMetrics {
+    cpu_usage: f32,
+    memory_used: u64,
+    memory_total: u64,
+    gpu_info: Option<GpuInfo>,
+    timestamp: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct GpuInfo {
+    utilization: f32,
+    memory_used: u64,
+    memory_total: u64,
+}
+
+
+#[derive(Debug, Clone)]
+struct TrainingMetrics {
+    epoch: usize,
+    loss: f64,
+    accuracy: f64,
+}
+
+struct App {
+    output_lines: Vec<String>,
+    metrics_history: Vec<TrainingMetrics>,
+    current_metrics: HashMap<String, serde_json::Value>,
+    system_metrics: Option<SystemMetrics>,
+    sys: System,
+    network: NetworkLayout,
+    last_viz_update: Instant,
+    model_architecture: ModelArchitecture,
+    script_state: ScriptState,
+    error_log: Vec<String>,
+    error_scroll: usize,
+    show_error_logs: bool,
+    is_paused: bool, 
+    //ipc_server: Option<IPCServer>,
+    training_scroll: usize,
+    command_tx: Option<mpsc::Sender<String>>,
+    //command_server: Option<CommandServer>,
+    //update_server: Option<UpdateServer>,
+    zmq_server: Option<ZMQServer>,
+    start_time: Option<Instant>,
+    total_epochs: Option<usize>,
+    total_batches: Option<usize>,
+    current_epoch: Option<usize>,
+    current_batch: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub enum NodeType {
+    Input,
+    Hidden,
+    Output,
+}
+
+#[derive(Debug)]
+pub struct NetworkLayout {
+    nodes: Vec<NetworkNode>,
+    connections: Vec<NetworkConnection>,
+    layers: Vec<usize>, // number of nodes in each layer
+    bounds: (f64, f64, f64, f64), // (min_x, min_y, max_x, max_y)
+}
+
+pub enum IPCState {
+    Connected,
+    Disconnected,
+    Error(String),
+}
+
+
+
+#[derive(Debug, Clone)]
+pub struct NetworkNode {
+    id: usize,
+    x: f64,
+    y: f64,
+    layer_index: usize,
+    original_index: usize,
+    scaled_index: usize,
+    activation: Option<f64>,
+    node_type: NodeType,
+}
+
+#[derive(Debug, Clone)]
+pub struct NetworkConnection {
+    from_node_id: usize,
+    to_node_id: usize,
+    weight: f64,
+    active: bool,
+    gradient: Option<f64>,  // For showing backprop
+    signal_strength: Option<f64>,  // For showing forward signal strength
+}
+
+impl NetworkLayout {
+    pub fn new(layer_sizes: &[usize]) -> Self {
+        let mut nodes = Vec::new();
+        let mut connections = Vec::new();
+        let mut next_node_id = 0;
+
+        let total_layers = layer_sizes.len();
+        let max_visible_nodes = 10;
+        if layer_sizes.is_empty() {
+            return NetworkLayout {
+                nodes,
+                connections,
+                layers: Vec::new(),
+                bounds: (-1.0, -1.0, 1.0, 1.0),
+            };
+        }
+        // Calculate scaled sizes while maintaining proportions
+        let scaled_sizes: Vec<usize> = layer_sizes.iter()
+            .map(|&size| size.min(max_visible_nodes))
+            .collect();
+
+        // Calculate scale factors for showing which nodes represent multiple nodes
+        let scale_factors: Vec<f64> = layer_sizes.iter()
+            .zip(scaled_sizes.iter())
+            .map(|(&orig, &scaled)| if scaled < orig {
+                orig as f64 / scaled as f64
+            } else {
+                1.0
+            })
+            .collect();
+
+        // Position nodes in a clean layout
+        for (layer_idx, &size) in layer_sizes.iter().enumerate() {
+            let x = -0.8 + (1.6 * layer_idx as f64 / (total_layers - 1) as f64);
+            let scaled_size = scaled_sizes[layer_idx];
+            
+            for node_idx in 0..scaled_size {
+                let y = if scaled_size > 1 {
+                    -0.8 + (1.6 * node_idx as f64 / (scaled_size - 1) as f64)
+                } else {
+                    0.0
+                };
+
+                // Map scaled index to original index for accurate data representation
+                let original_index = if size > max_visible_nodes {
+                    ((node_idx as f64 * scale_factors[layer_idx]).round() as usize).min(size - 1)
+                } else {
+                    node_idx
+                };
+
+                nodes.push(NetworkNode {
+                    id: next_node_id,
+                    x,
+                    y,
+                    layer_index: layer_idx,
+                    original_index,
+                    scaled_index: node_idx,
+                    activation: None,
+                    node_type: if layer_idx == 0 {
+                        NodeType::Input
+                    } else if layer_idx == total_layers - 1 {
+                        NodeType::Output
+                    } else {
+                        NodeType::Hidden
+                    },
+                });
+                next_node_id += 1;
+            }
+        }
+
+        // Create connections between layers showing information flow
+        for layer_idx in 0..total_layers - 1 {
+            let current_layer: Vec<_> = nodes.iter()
+                .filter(|n| n.layer_index == layer_idx)
+                .collect();
+            let next_layer: Vec<_> = nodes.iter()
+                .filter(|n| n.layer_index == layer_idx + 1)
+                .collect();
+
+            for &from_node in &current_layer {
+                for &to_node in &next_layer {
+                    connections.push(NetworkConnection {
+                        from_node_id: from_node.id,
+                        to_node_id: to_node.id,
+                        weight: 1.0,
+                        active: false,
+                        gradient: None,
+                        signal_strength: None,
+                    });
+                }
+            }
+        }
+
+        NetworkLayout {
+            nodes,
+            connections,
+            layers: layer_sizes.to_vec(),
+            bounds: (-1.0, -1.0, 1.0, 1.0),
+        }
+    }
+
+    // Handle updates from training
+    pub fn update_forward_signal(&mut self, from_layer: usize, from_idx: usize, 
+                               to_layer: usize, to_idx: usize, signal: f64) {
+        if let Some(conn) = self.find_connection(from_layer, from_idx, to_layer, to_idx) {
+            conn.signal_strength = Some(signal);
+            conn.active = signal > 0.1;
+        }
+    }
+
+    pub fn update_backward_signal(&mut self, from_layer: usize, from_idx: usize,
+                                to_layer: usize, to_idx: usize, gradient: f64) {
+        if let Some(conn) = self.find_connection(from_layer, from_idx, to_layer, to_idx) {
+            conn.gradient = Some(gradient);
+        }
+    }
+
+    pub fn update_node_activation(&mut self, layer: usize, node: usize, activation: f64) {
+        if let Some(node) = self.nodes.iter_mut()
+            .find(|n| n.layer_index == layer && n.original_index == node) {
+            node.activation = Some(activation);
+        }
+    }
+
+    fn find_connection(&mut self, from_layer: usize, from_idx: usize,
+                      to_layer: usize, to_idx: usize) -> Option<&mut NetworkConnection> {
+        let from_node = self.nodes.iter()
+            .find(|n| n.layer_index == from_layer && n.original_index == from_idx)?;
+        let to_node = self.nodes.iter()
+            .find(|n| n.layer_index == to_layer && n.original_index == to_idx)?;
+        
+        self.connections.iter_mut()
+            .find(|c| c.from_node_id == from_node.id && c.to_node_id == to_node.id)
+    }
+
+    pub fn draw<'a>(&'a self) -> Canvas<'a, impl Fn(&mut ratatui::widgets::canvas::Context<'_>) + 'a> {
+        Canvas::default()
+            .paint(|ctx| {
+                // Draw connections showing information flow
+                for conn in &self.connections {
+                    let from = &self.nodes.iter().find(|n| n.id == conn.from_node_id).unwrap();
+                    let to = &self.nodes.iter().find(|n| n.id == conn.to_node_id).unwrap();
+
+                    // Draw base connection
+                    let base_color = if conn.active {
+                        Color::Rgb(100, 100, 255)
+                    } else {
+                        Color::DarkGray
+                    };
+
+                    ctx.draw(&CanvasLine {
+                        x1: from.x,
+                        y1: from.y,
+                        x2: to.x,
+                        y2: to.y,
+                        color: base_color,
+                    });
+
+                    // Show forward signal propagation
+                    if let Some(signal) = conn.signal_strength {
+                        if signal > 0.1 {
+                            // Calculate position along connection
+                            let t = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as f64 / 500.0;
+                            let phase = t % 1.0;
+                            
+                            let x = from.x + (to.x - from.x) * phase;
+                            let y = from.y + (to.y - from.y) * phase;
+                            
+                            let intensity = (signal * 255.0) as u8;
+                            ctx.draw(&Points {
+                                coords: &[(x, y)],
+                                color: Color::Rgb(intensity, intensity, 0),
+                            });
+                        }
+                    }
+
+                    // Show backward gradient flow
+                    if let Some(gradient) = conn.gradient {
+                        if gradient.abs() > 0.1 {
+                            let t = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as f64 / 500.0;
+                            let phase = t % 1.0;
+                            
+                            let x = to.x + (from.x - to.x) * phase;
+                            let y = to.y + (from.y - to.y) * phase;
+                            
+                            let intensity = (gradient.abs() * 255.0) as u8;
+                            ctx.draw(&Points {
+                                coords: &[(x, y)],
+                                color: Color::Rgb(intensity, 0, 0),  // Red for backprop
+                            });
+                        }
+                    }
+                }
+
+                // Draw nodes with activation states
+                for node in &self.nodes {
+                    let radius = match node.node_type {
+                        NodeType::Input | NodeType::Output => 0.06,
+                        NodeType::Hidden => 0.05,
+                    };
+
+                    let points = self.generate_circle_points(node.x, node.y, radius, 16);
+                    
+                    // Node color based on type and activation
+                    let color = match node.node_type {
+                        NodeType::Input => {
+                            if let Some(act) = node.activation {
+                                if act > 0.1 {
+                                    Color::Rgb(100, 149, 237)  // Bright blue
+                                } else {
+                                    Color::DarkGray
+                                }
+                            } else {
+                                Color::DarkGray
+                            }
+                        },
+                        NodeType::Hidden => {
+                            if let Some(act) = node.activation {
+                                let intensity = (act * 255.0) as u8;
+                                Color::Rgb(intensity, intensity, intensity)
+                            } else {
+                                Color::DarkGray
+                            }
+                        },
+                        NodeType::Output => {
+                            if let Some(act) = node.activation {
+                                if act > 0.1 {
+                                    Color::Rgb(144, 238, 144)  // Bright green
+                                } else {
+                                    Color::DarkGray
+                                }
+                            } else {
+                                Color::DarkGray
+                            }
+                        }
+                    };
+
+                    ctx.draw(&Points {
+                        coords: &points,
+                        color,
+                    });
+                }
+            })
+            .x_bounds([self.bounds.0, self.bounds.2])
+            .y_bounds([self.bounds.1, self.bounds.3])
+    }
+
+    fn generate_circle_points(&self, x: f64, y: f64, radius: f64, points: usize) -> Vec<(f64, f64)> {
+        (0..points).map(|i| {
+            let angle = 2.0 * std::f64::consts::PI * (i as f64 / points as f64);
+            (
+                x + radius * angle.cos(),
+                y + radius * angle.sin()
+            )
+        }).collect()
+    }
+    fn get_node_index(&self, pos: (usize, usize)) -> usize {
+        let mut index = 0;
+        for i in 0..pos.0 {
+            index += self.layers[i];
+        }
+        index + pos.1
+    }
+
+    pub fn update_activation(&mut self, layer: usize, node: usize, activation: f64) {
+        let idx = self.get_node_index((layer, node));
+        if let Some(node) = self.nodes.get_mut(idx) {
+            node.activation = Some(activation);
+        }
+    }
+    pub fn update_connection(&mut self, from: (usize, usize), to: (usize, usize), weight: f64, active: bool) {
+        // First find both nodes safely
+        let from_node_id = match self.nodes.iter()
+            .find(|n| n.layer_index == from.0 && n.original_index == from.1)
+            .map(|n| n.id) {
+                Some(id) => id,
+                None => return, // Early return if from_node not found
+        };
+        
+        let to_node_id = match self.nodes.iter()
+            .find(|n| n.layer_index == to.0 && n.original_index == to.1)
+            .map(|n| n.id) {
+                Some(id) => id,
+                None => return, // Early return if to_node not found
+        };
+        
+        // Now find and update the connection
+        if let Some(conn) = self.connections.iter_mut()
+            .find(|c| c.from_node_id == from_node_id && c.to_node_id == to_node_id) {
+            conn.weight = weight;
+            conn.active = active;
+        }
+    }
+
+}
+
+
+impl App {
+    fn new() -> App {
+        App {
+            output_lines: Vec::new(),
+            metrics_history: Vec::new(),
+            current_metrics: HashMap::new(),
+            system_metrics: None,
+            sys: System::new_all(),
+            network: NetworkLayout::new(&[]),
+            model_architecture: ModelArchitecture { framework: None, layers: Vec::new(), total_parameters: 0},
+            script_state: ScriptState::Starting,
+            error_log: Vec::new(),
+            error_scroll: 0,
+            show_error_logs: false,
+            is_paused: false,
+            //ipc_server: None,
+            training_scroll: 0,
+            command_tx: None,
+            //command_server: None,
+            //update_server: None,
+            zmq_server: None,
+            start_time: None,
+            total_epochs: None,
+            current_epoch: None,
+            total_batches: None,
+            current_batch: None,
+            last_viz_update: Instant::now(),
+        }
+    }
+    fn log_recieved_update(&self, update: &Update) {
+        log_to_file(&format!(
+                "Processing Update - Type: {}, Time: {}, Data: {:?}",
+                update.type_,
+                update.timestamp,
+                update.data
+        ));
+    }
+    fn update_network_layout(&mut self, architecture: &ModelArchitecture) {
+        // Convert architecture into layer sizes
+        let layer_sizes: Vec<usize> = architecture.layers.iter()
+            .map(|layer| match (&layer.input_size, &layer.output_size) {
+                (Some(input), _) => input[0],
+                (_, Some(output)) => output[0],
+                _ => 0 // Skip layers we can't size
+            })
+            .filter(|&size| size > 0)
+            .collect();
+
+        if !layer_sizes.is_empty() {
+            self.network = NetworkLayout::new(&layer_sizes);
+        }
+    }
+
+    fn handle_zmq_update(&mut self, update: Update) {
+        log_to_file(&format!("Received ZMQ Update: {:?}", update));
+        self.log_recieved_update(&update);
+        
+        // Initialize start time on first update if not set
+        if self.start_time.is_none() {
+            self.start_time = Some(Instant::now());
+        }
+
+        match update.type_.as_str() {
+            "activation" => {
+                if let serde_json::Value::Object(data) = update.data {
+                    if let (Some(layer), Some(node), Some(value)) = (
+                        data.get("layer").and_then(|v| v.as_u64()),
+                        data.get("node").and_then(|v| v.as_u64()),
+                        data.get("value").and_then(|v| v.as_f64())
+                    ) {
+                        self.network.update_activation(
+                            layer as usize,
+                            node as usize,
+                            value
+                        );
+                    }
+                }
+            },
+
+            "connection" => {
+                if let serde_json::Value::Object(data) = update.data {
+                    if let Some(from) = data.get("from").and_then(|v| v.as_object()) {
+                        if let Some(to) = data.get("to").and_then(|v| v.as_object()) {
+                            if let Some(active) = data.get("active").and_then(|v| v.as_bool()) {
+                                let from_pos = (
+                                    from.get("layer").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                                    from.get("node").and_then(|v| v.as_u64()).unwrap_or(0) as usize
+                                );
+                                let to_pos = (
+                                    to.get("layer").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                                    to.get("node").and_then(|v| v.as_u64()).unwrap_or(0) as usize
+                                );
+                                self.network.update_connection(from_pos, to_pos, 1.0, active);
+                            }
+                        }
+                    }
+                }
+            },
+
+            "layer_state" => {
+                if let serde_json::Value::Object(data) = update.data {
+                    if let Some(layer_idx) = data.get("layer").and_then(|v| v.as_u64()) {
+                        if let Some(activations) = data.get("activations").and_then(|v| v.as_array()) {
+                            // Rate limit visualization updates
+                            if self.last_viz_update.elapsed() > Duration::from_millis(100) {
+                                for (node_idx, val) in activations.iter().enumerate() {
+                                    if let Some(value) = val.as_f64() {
+                                        self.network.update_activation(
+                                            layer_idx as usize,
+                                            node_idx,
+                                            value
+                                        );
+                                    }
+                                }
+                                self.last_viz_update = Instant::now();
+                            }
+                        }
+                    }
+                }
+            },
+
+            "batch" => {
+                if let serde_json::Value::Object(data) = update.data {
+                    if let Some(metrics) = data.get("metrics").and_then(|v| v.as_object()) {
+                        // Update batch number if available
+                        if let Some(batch) = data.get("batch").and_then(|v| v.as_u64()) {
+                            self.current_batch = Some(batch as usize);
+                        }
+
+                        // Process each metric
+                        for (name, value) in metrics.iter() {
+                            self.current_metrics.insert(name.clone(), value.clone());
+                            
+                            // Format and add to output lines for display
+                            let display_line = format!("Batch {}: {}: {}", 
+                                self.current_batch.unwrap_or(0),
+                                name, 
+                                format_value(value)
+                            );
+                            self.output_lines.push(display_line);
+                        }
+
+                        // Keep output lines at a reasonable size
+                        if self.output_lines.len() > 1000 {
+                            self.output_lines.drain(0..500);
+                            if self.training_scroll > 0 {
+                                self.training_scroll = self.training_scroll.saturating_sub(500);
+                            }
+                        }
+                    }
+                }
+            },
+
+            "epoch" => {
+                if let serde_json::Value::Object(data) = update.data {
+                    // Update epoch number if available
+                    if let Some(epoch) = data.get("epoch").and_then(|v| v.as_u64()) {
+                        self.current_epoch = Some(epoch as usize);
+                    }
+
+                    if let Some(metrics) = data.get("metrics").and_then(|v| v.as_object()) {
+                        let elapsed = self.start_time.map(|t| t.elapsed()).unwrap_or_default();
+                        let epoch_header = format!(
+                            "\nEpoch {}/{} [{:02}:{:02}:{:02}]",
+                            self.current_epoch.unwrap_or(0),
+                            self.total_epochs.unwrap_or(0),
+                            elapsed.as_secs() / 3600,
+                            (elapsed.as_secs() % 3600) / 60,
+                            elapsed.as_secs() % 60
+                        );
+                        self.output_lines.push(epoch_header.clone());
+                        log_to_file(&format!("Added epoch header: {}", epoch_header.clone()));
+
+                        for (name, value) in metrics.iter() {
+                            self.current_metrics.insert(name.clone(), value.clone());
+                            let display_line = format!("{}: {}", name, format_value(value));
+                            self.output_lines.push(display_line.clone());
+                            log_to_file(&format!("Added epoch metric: {}", display_line));
+                        }
+
+                        // Add a blank line after epoch metrics for better readability
+                        self.output_lines.push(String::new());
+                    }
+                }
+            },
+
+            "status" => {
+                if let serde_json::Value::Object(data) = update.data {
+                    if let Some(state) = data.get("state").and_then(|v| v.as_str()) {
+                        match state {
+                            "paused" => {
+                                self.is_paused = true;
+                                self.output_lines.push("Training paused".to_string());
+                            },
+                            "resumed" => {
+                                self.is_paused = false;
+                                self.output_lines.push("Training resumed".to_string());
+                            },
+                            "stopped" => {
+                                self.update_script_state(ScriptState::Stopped);
+                                self.output_lines.push("Training stopped".to_string());
+                            },
+                            _ => {}
+                        }
+                    }
+                }
+            },
+            _ => {
+                log_to_file(&format!("Unknown update type: {}", update.type_));
+            }
+        }
+    }
+
+    fn scroll_training_log(&mut self, delta: i32) {
+        let new_scroll = (self.training_scroll as i32 + delta).max(0) as usize;
+        let max_scroll = self.output_lines.len().saturating_sub(1);
+        self.training_scroll = new_scroll.min(max_scroll);
+    }
+    fn handle_key(&mut self, key: KeyCode) -> bool {
+        match key {
+            KeyCode::Char('q') | KeyCode::Esc => true,
+            KeyCode::Char('p') | KeyCode::Enter => {
+                log_to_file("Pause/Resume key pressed");
+                if let Some(ref mut server) = self.zmq_server {
+                    let command = if self.is_paused { "resume" } else { "pause" };
+                    match server.send_command(command) {
+                        Ok(_) => {
+                            self.is_paused = !self.is_paused;
+                            log_to_file(&format!("Successfully sent {} command", command));
+                        }
+                        Err(e) => {
+                            let error_msg = format!("Failed to send {} command: {}", command, e);
+                            log_to_file(&error_msg);
+                            self.log_error(&error_msg);
+                        }
+                    }
+                } else {
+                    log_to_file("No ZMQ server available");
+                    self.log_error("No ZMQ server available");
+                }
+                false
+            },
+            KeyCode::Char('s') => {
+                log_to_file("Stop key pressed");
+                if let Some(ref mut server) = self.zmq_server {
+                    match server.send_command("stop") {
+                        Ok(_) => {
+                            log_to_file("Stop command sent successfully");
+                            self.update_script_state(ScriptState::Stopped)
+
+                        }
+                        Err(e) => {
+                            let error_msg = format!("Failed to send stop command: {}", e);
+                            log_to_file(&error_msg);
+                            self.log_error(&error_msg);
+                        }
+                    }
+                } else {
+                    log_to_file("No ZMQ server available");
+                    self.log_error("No ZMQ server available");
+                }
+                false
+            },
+            KeyCode::Char('c') => {
+                self.error_log.clear();
+                if matches!(self.script_state, ScriptState::Error(_)) {
+                    self.script_state = ScriptState::Running;
+                }
+                false
+            }
+            KeyCode::Char('h') => {
+                self.show_help();
+                false
+            }
+            KeyCode::Char('e') => {
+                self.show_error_logs = !self.show_error_logs;
+                false
+            }
+
+            KeyCode::Up => {
+                if self.show_error_logs {
+                    self.scroll_error_log(-1);
+                } else { self.scroll_training_log(-1); }
+                false
+            }
+
+            KeyCode::Down => {
+                if self.show_error_logs {
+                    self.scroll_error_log(1);
+                } else { self.scroll_training_log(1); }
+                false
+            }
+
+
+            _ => false,
+        }
+    }
+
+    /* 
+     * I think these group of functions are very extendable but will need a code refactor later
+     * down the line and optimization of the rust code base in general
+     *
+     * Since these functions point at the batch, epochs, and individual metrics these can probably
+     * just be moved around other parts of the ui as needed since there is some redundency that
+     * needs to be cleaned up way later 
+     */ 
+    fn update_metric(&mut self, name: &str, value: serde_json::Value) {
+        /* old logic before hashmap 
+        log_to_file(&format!("Before update: {:?}", self.current_metrics));
+        // Update the metric immediately
+        if self.current_metrics.is_none() {
+            self.current_metrics = Some(TrainingMetrics {
+                epoch: 0,
+                loss: 0.0,
+                accuracy: 0.0,
+            });
+        } 
+        if let Some(ref mut metrics) = self.current_metrics {
+            match name {
+                "loss" => metrics.loss = value,
+                "accuracy" => metrics.accuracy = value,
+                _ => {}
+            }
+        }
+        //log_to_file(&format!("After update: {:?}", self.current_metrics));*/ 
+        self.current_metrics.insert(name.to_string(), value.clone());
+    }
+    /*
+    fn update_batch_metrics(&mut self, metrics: &serde_json::Map<String, serde_json::Value>) {
+        log_to_file(&format!("Updating batch metrics: {:?}", metrics));
+        if let (Some(loss), Some(accuracy)) = (
+            metrics.get("loss").and_then(|v| v.as_f64()),
+            metrics.get("accuracy").and_then(|v| v.as_f64())
+        ) /*{
+            // Might want to store these in a vector or update UI directly: Figure it out later -> hashmap 
+            if self.current_metrics.is_none() {
+                self.current_metrics = Some(TrainingMetrics {
+                    epoch: 0,
+                    loss,
+                    accuracy,
+                });
+            }
+        log_to_file(&format!("Updated metrics state: {:?}", self.current_metrics));
+        } 
+        */
+    }
+
+
+    fn update_epoch_metrics(&mut self, epoch: usize, metrics: &serde_json::Map<String, serde_json::Value>) {
+        if let (Some(loss), Some(accuracy)) = (
+            metrics.get("loss").and_then(|v| v.as_f64()),
+            metrics.get("accuracy").and_then(|v| v.as_f64())
+        ) {
+            let metrics = TrainingMetrics {
+                epoch,
+                loss,
+                accuracy,
+            };
+            
+            self.metrics_history.push(metrics.clone());
+            self.current_metrics = Some(metrics);
+        }
+    }
+    */
+
+    fn scroll_error_log(&mut self, delta: i32) {
+        let new_scroll = (self.error_scroll as i32 + delta).max(0) as usize;
+        self.error_scroll = new_scroll;
+    }
+
+    fn show_help(&mut self) {
+        self.output_lines.retain(|line| !line.contains("=== Keyboard Controls ==="));
+        let help_messages = vec![
+            "\n=== Keyboard Controls ===",
+            "q/ESC : Quit",
+            "p/SPACE: Pause/Resume training",
+            "s     : Stop training",
+            "e     : Toggle error log",
+            "↑/↓   : Scroll error log",
+            "c     : Clear error log",
+            "h     : Show this help",
+            "======================",
+        ];
+
+        for msg in help_messages {
+            self.output_lines.push(msg.to_string());
+        }
+    }
+
+    fn log_error(&mut self, error: &str) {
+        if !self.error_log.contains(&error.to_string()) {
+            self.error_log.push(error.to_string());
+        }
+    }
+
+    fn update_script_state(&mut self, state:ScriptState) {
+        self.script_state = state.clone();
+        if let ScriptState::Error(error) = &state {
+            self.log_error(&error.to_string());
+        }
+    }
+
+    fn update_architecture(&mut self, architecture: ModelArchitecture) {
+        // Convert architecture into layer sizes
+        let layer_sizes: Vec<usize> = architecture.layers.iter()
+            .map(|layer| match (&layer.input_size, &layer.output_size) {
+                (Some(input), _) => input[0],
+                (_, Some(output)) => output[0],
+                _ => 0
+            })
+            .filter(|&size| size > 0)
+            .collect();
+
+        // Only update network if we have valid layer sizes
+        if !layer_sizes.is_empty() {
+            self.network = NetworkLayout::new(&layer_sizes);
+        }
+        
+        self.model_architecture = architecture;
+    }
+
+   fn update_system_metrics(&mut self) {
+        self.sys.refresh_all();
+        
+        // Calculate CPU usage across all cores
+        let cpu_usage = self.sys.global_cpu_info().cpu_usage();
+        
+        // Get memory information
+        let memory_used = self.sys.used_memory();
+        let memory_total = self.sys.total_memory();
+
+        // Try to get GPU information if available
+        let gpu_info = get_gpu_info();
+
+        self.system_metrics = Some(SystemMetrics {
+            cpu_usage,
+            memory_used,
+            memory_total,
+            gpu_info,
+            timestamp: Instant::now(),
+        });
+    }
+}
+
+fn format_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Number(n) => {
+            if let Some(f) = n.as_f64() {
+                if f.abs() < 0.0001 || f.abs() >= 10000.0 {
+                    format!("{:.2e}", f)
+                } else {
+                    format!("{:.4}", f)
+                }
+            } else {
+                n.to_string()
+            }
+        },
+        _ => value.to_string(),
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.2} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.2} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+fn get_gpu_info() -> Option<GpuInfo> {
+    // Try to run nvidia-smi for NVIDIA GPUs
+    let output = StdCommand::new("nvidia-smi")
+        .args(&["--query-gpu=utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        let values: Vec<&str> = output_str.trim().split(',').collect();
+        if values.len() == 3 {
+            return Some(GpuInfo {
+                utilization: values[0].trim().parse().unwrap_or(0.0),
+                memory_used: values[1].trim().parse().unwrap_or(0),
+                memory_total: values[2].trim().parse().unwrap_or(0),
+            });
+        }
+    }
+    None
+}
+
+fn render_system_metrics(f: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .title("System Metrics")
+        .borders(Borders::ALL);
+    let inner_area = block.inner(area);
+    f.render_widget(block, area);
+
+    if let Some(metrics) = &app.system_metrics {
+        let mem_percentage = (metrics.memory_used as f64 / metrics.memory_total as f64 * 100.0) as u64;
+        
+        let mut text = format!(
+            "\nCPU Usage: {:.1}%\n\
+             Memory: {} / {} ({:.1}%)",
+            metrics.cpu_usage,
+            format_bytes(metrics.memory_used * 1024), // Convert KB to bytes
+            format_bytes(metrics.memory_total * 1024),
+            mem_percentage,
+        );
+
+        // Add GPU metrics if available
+        if let Some(gpu) = &metrics.gpu_info {
+            text.push_str(&format!(
+                "\n\nGPU:\n\
+                 Utilization: {:.1}%\n\
+                 Memory: {} / {}",
+                gpu.utilization,
+                format_bytes(gpu.memory_used * 1024 * 1024), // Convert MB to bytes
+                format_bytes(gpu.memory_total * 1024 * 1024),
+            ));
+        }
+
+        let paragraph = Paragraph::new(text)
+            .style(Style::default().fg(Color::White));
+        f.render_widget(paragraph, inner_area);
+    }
+}
+
+fn parse_training_line(line: &str) -> Option<TrainingMetrics> {
+    // Example format: "Training epoch 0, Loss: 1.0000, Accuracy: 0%"
+    let parts: Vec<&str> = line.split(',').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+
+    let epoch = parts[0].split_whitespace()
+        .nth(2)?
+        .parse::<usize>().ok()?;
+    
+    let loss = parts[1].trim()
+        .strip_prefix("Loss: ")?
+        .parse::<f64>().ok()?;
+    
+    let accuracy = parts[2].trim()
+        .strip_prefix("Accuracy: ")?
+        .strip_suffix("%")?
+        .parse::<f64>().ok()?;
+
+    Some(TrainingMetrics {
+        epoch,
+        loss,
+        accuracy,
+    })
+}
+
+
+
+fn render_training_progress(f: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .title(if app.show_error_logs { 
+            "Error Log" 
+        } else { 
+            "Training Progress" 
+        })
+        .title_style(Style::default().fg(match &app.script_state {
+            ScriptState::Error(_) => Color::Red,
+            _ => Color::White,
+        }))
+        .borders(Borders::ALL);
+
+    let inner_area = block.inner(area);
+    f.render_widget(block, area);
+
+    let text = if app.show_error_logs {
+        app.error_log.iter()
+            .skip(app.error_scroll)
+            .map(|err| format!("❌ {}", err))
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        app.output_lines.iter()
+            .skip(app.training_scroll)
+            .cloned()
+            .collect::<Vec<String>>()
+            .join("\n")
+    };
+
+    let paragraph = Paragraph::new(text)
+        .style(Style::default().fg(match &app.script_state {
+            ScriptState::Error(_) => Color::Red,
+            _ => Color::White,
+        }));
+
+    let margin = Margin {
+        vertical: 1,
+        horizontal: 1,
+    };
+    f.render_widget(paragraph, inner_area.inner(margin));
+}
+
+
+
+
+
+fn render_metrics(f: &mut Frame, app: &App, area: Rect) {
+    let metrics_block = Block::default()
+        .title("Metrics")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(match &app.script_state {
+            ScriptState::Error(_) => Color::Red,
+            ScriptState::Completed => Color::Green,
+            ScriptState::Stopped => Color::LightCyan,
+            _ => if app.is_paused {Color::Yellow } else {Color::White},
+        }));
+
+    let inner_area = metrics_block.inner(area);
+    f.render_widget(metrics_block, area);
+
+    // Build status section
+    let mut display_text = format!("Status: {}\n",
+        match &app.script_state {
+            ScriptState::Starting => "Starting",
+            ScriptState::Running => if app.is_paused { "Paused" } else { "Running" },
+            ScriptState::Error(_) => "Error",
+            ScriptState::Completed => "Complete",
+            ScriptState::Stopped => "Stopped",
+        }
+    );
+
+    // Add framework info
+    display_text.push_str(&format!("{}\n\n",
+        match &app.model_architecture.framework {
+            Some(MLFramework::PyTorch) => "Framework: PyTorch",
+            Some(MLFramework::TensorFlow) => "Framework: TensorFlow",
+            Some(MLFramework::JAX) => "Framework: JAX",
+            Some(MLFramework::Keras) => "Framework: Keras",
+            Some(MLFramework::Unknown) => "Framework: Unknown",
+            None => "Framework: Not Detected",
+        }
+    ));
+
+    // Add progress information if available
+    if let (Some(epoch), Some(total_epochs)) = (app.current_epoch, app.total_epochs) {
+        display_text.push_str(&format!("Progress: Epoch {}/{}\n", epoch, total_epochs));
+    }
+
+    // Add current metrics
+    display_text.push_str("Current Metrics:\n");
+    for (name, value) in &app.current_metrics {
+        display_text.push_str(&format!("{}: {}\n", name, format_value(value)));
+    }
+
+    let paragraph = Paragraph::new(display_text)
+        .style(Style::default().fg(match &app.script_state {
+            ScriptState::Error(_) => Color::Red,
+            _ => Color::White,
+        }));
+
+    f.render_widget(paragraph, inner_area);
+}
+
+fn render_layout(f: &mut Frame, app: &App) {
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(70),
+            Constraint::Percentage(30),
+        ])
+        .split(f.area());
+
+    let top_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(70),
+            Constraint::Percentage(30),
+        ])
+        .split(main_chunks[0]);
+
+    let bottom_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(70),
+            Constraint::Percentage(30),
+        ])
+        .split(main_chunks[1]);
+
+    // Model visualization
+    let model_viz = Block::default()
+        .title("Model Architecture")
+        .borders(Borders::ALL);
+    f.render_widget(model_viz, top_chunks[0]);
+
+    // Metrics panel
+    render_metrics(f, app, top_chunks[1]);
+
+    // Training progress
+    let training_block = Block::default()
+        .title("Training Progress")
+        .borders(Borders::ALL);
+    f.render_widget(training_block, bottom_chunks[0]);
+
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(70),
+            Constraint::Percentage(30),
+        ])
+        .split(f.area());
+
+    let top_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(70),
+            Constraint::Percentage(30),
+        ])
+        .split(main_chunks[0]);
+
+    let bottom_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(70),
+            Constraint::Percentage(30),
+        ])
+        .split(main_chunks[1]);
+
+    // Model visualization and metrics panels remain the same
+    /*
+    let model_viz = Block::default()
+        .title("Model Architecture")
+        .borders(Borders::ALL);
+    f.render_widget(model_viz, top_chunks[0]);
+    */
+    let network_canvas = app.network.draw();
+    f.render_widget(
+        network_canvas.block(
+            Block::default()
+                .title("Model Architecture")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(match &app.script_state {
+                    ScriptState::Error(_) => Color::Red,
+                    ScriptState::Completed => Color::Green,
+                    ScriptState::Stopped => Color::Reset,
+                    _ => Color::White,
+                }))
+        ),
+        top_chunks[0]
+    );
+    render_metrics(f, app, top_chunks[1]);
+    render_training_progress(f, app, bottom_chunks[0]);
+
+
+    // Training progress
+    /*
+    let training_block = Block::default()
+        .title("Training Progress")
+        .borders(Borders::ALL);
+    f.render_widget(training_block, bottom_chunks[0]);
+    */
+
+    // System metrics
+    render_system_metrics(f, app, bottom_chunks[1]);
+
+    // Render training output with margin
+    /*
+    if !app.output_lines.is_empty() {
+        let output_text = app.output_lines.join("\n");
+        let paragraph = Paragraph::new(output_text)
+            .style(Style::default().fg(Color::White));
+        let area = Margin {
+            vertical: 1,
+            horizontal: 1,
+        };
+        f.render_widget(paragraph, bottom_chunks[0].inner(area));
+    }
+    */
+
+}
+
+fn run_app(python: PythonRunner) -> Result<()> {
+    // Terminal setup
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    // Create app and initialize architecture
+    let mut app = App::new();
+    if let Some(arch) = python.get_architecture() {
+        app.update_architecture(arch.clone());
+    }
+
+    // Setup ZMQ channels
+    let (mut zmq_server, update_rx, command_tx) = ZMQServer::new()?;
+    
+    // Create a separate channel for updates
+    let (update_tx, _update_rx) = mpsc::channel::<Update>();
+    
+    // Start the metrics listener with the update channel
+    zmq_server.start_listening(update_tx)?;
+    
+    app.command_tx = Some(command_tx);
+    app.zmq_server = Some(zmq_server);
+
+    let mut last_render = Instant::now();
+    //let render_interval = Duration::from_millis(16); //60 fps
+    let render_interval = Duration::from_millis(33); // 30 fps
+    let mut frame_counter = 0;
+    let mut has_error = false;
+
+    let mut last_metrics_update = Instant::now();
+    let mut has_error = false;
+    
+    loop {
+        // Process all pending ZMQ updates
+        while let Ok(update) = update_rx.try_recv() {
+            log_to_file(&format!("Main loop received update: {:?}", update));
+            app.handle_zmq_update(update);
+        }
+
+        // Check for Python process state
+        match python.receive()? {
+            ScriptOutput::Error(error) => {
+                app.log_error(&error.to_string());
+                app.update_script_state(ScriptState::Error(error));
+            }
+            ScriptOutput::Terminated => {
+                if !matches!(app.script_state, ScriptState::Error(_)) {
+                    app.update_script_state(ScriptState::Completed);
+                }
+            }
+            _ => {}
+        }
+
+        // Update system metrics every second
+        if last_metrics_update.elapsed() >= Duration::from_secs(1) {
+            app.update_system_metrics();
+            last_metrics_update = Instant::now();
+        }
+
+        // Handle input with a short timeout
+        if event::poll(Duration::from_millis(10))? {
+            if let Event::Key(key) = event::read()? {
+                if app.handle_key(key.code) {
+                    break;
+                }
+            }
+        }
+
+        // Render frame at 60 FPS
+        if last_render.elapsed() >= render_interval {
+            terminal.draw(|f| render_layout(f, &app))?;
+            last_render = Instant::now();
+        } else {
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    // Cleanup
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+
+    Ok(())
+
+    
+}
+
+
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    if cli.debug {
+        env_logger::init();
+    }
+
+    let python = PythonRunner::new(cli.script, cli.script_args)?;
+    let result = run_app(python);
+    
+    result
+}
