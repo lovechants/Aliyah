@@ -35,6 +35,7 @@ cargo build
 pip install -e . 
 cargo run -- <script.py>
 ```
+'\data' is for example scripts only 
 ---
 
 ![MINST Rendering](example.png)
