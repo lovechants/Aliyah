@@ -12,8 +12,10 @@ use ratatui::{
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, GraphType, Dataset, canvas::{Canvas, Context, Line as CanvasLine, Points}},
+    widgets::{Chart, Axis, Wrap},
     Terminal, Frame,
     symbols::Marker,
+    prelude::Alignment,
 };
 use std::{
     io::{self, BufRead, BufReader, Write},
@@ -114,6 +116,8 @@ struct App {
     total_batches: Option<usize>,
     current_epoch: Option<usize>,
     current_batch: Option<usize>,
+    selected_node: Option<usize>,
+    hover_position: Option<(f64, f64)>,
 }
 
 #[derive(Debug, Clone)]
@@ -491,6 +495,8 @@ impl App {
             total_batches: None,
             current_batch: None,
             last_viz_update: Instant::now(),
+            selected_node: None,
+            hover_position: None,
         }
     }
     fn log_recieved_update(&self, update: &Update) {
@@ -501,6 +507,54 @@ impl App {
                 update.data
         ));
     }
+
+
+    fn handle_mouse_event(&mut self, col: u16, row: u16, term_width: u16, term_height: u16) {
+        // Convert terminal coordinates to canvas coordinates
+        let x = (col as f64 / term_width as f64) * 2.0 - 1.0;
+        let y = (row as f64 / term_height as f64) * 2.0 - 1.0;
+        
+        self.hover_position = Some((x, y));
+        
+        // Find if we're hovering over a node
+        for (idx, node) in self.network.nodes.iter().enumerate() {
+            let distance = ((node.x - x).powi(2) + (node.y - y).powi(2)).sqrt();
+            if distance < 0.1 {  // Node selection radius
+                self.selected_node = Some(idx);
+                return;
+            }
+        }
+        
+        // Not hovering over any node
+        self.selected_node = None;
+    }
+
+    fn handle_mouse_click(&mut self, col: u16, row: u16, term_width: u16, term_height: u16) {
+        // Convert terminal coordinates to canvas coordinates
+        let x = (col as f64 / term_width as f64) * 2.0 - 1.0;
+        let y = (row as f64 / term_height as f64) * 2.0 - 1.0;
+        
+        // Find if we're clicking on a node
+        for (idx, node) in self.network.nodes.iter().enumerate() {
+            let distance = ((node.x - x).powi(2) + (node.y - y).powi(2)).sqrt();
+            if distance < 0.1 {  // Node selection radius
+                // Toggle selection - if already selected, deselect it
+                if self.selected_node == Some(idx) {
+                    self.selected_node = None;
+                } else {
+                    self.selected_node = Some(idx);
+                }
+                return;
+            }
+        }
+        
+        // Clicking on empty space deselects
+        self.selected_node = None;
+        
+        // Check if clicking in other UI areas and react accordingly
+        // (You would need to define regions for different panels)
+    }
+
     fn update_network_layout(&mut self, architecture: &ModelArchitecture) {
         // Convert architecture into layer sizes
         let layer_sizes: Vec<usize> = architecture.layers.iter()
@@ -656,10 +710,12 @@ impl App {
                         match state {
                             "paused" => {
                                 self.is_paused = true;
+                                self.update_script_state(ScriptState::Paused);
                                 self.output_lines.push("Training paused".to_string());
                             },
                             "resumed" => {
                                 self.is_paused = false;
+                                self.update_script_state(ScriptState::Running);
                                 self.output_lines.push("Training resumed".to_string());
                             },
                             "stopped" => {
@@ -962,6 +1018,9 @@ fn get_gpu_info() -> Option<GpuInfo> {
     None
 }
 
+
+
+
 fn render_system_metrics(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .title("System Metrics")
@@ -1072,9 +1131,39 @@ fn render_training_progress(f: &mut Frame, app: &App, area: Rect) {
 }
 
 
+fn render_node_info(f: &mut Frame, app: &App, area: Rect) {
+    if let Some(node_idx) = app.selected_node {
+        if node_idx < app.network.nodes.len() {
+            let node = &app.network.nodes[node_idx];
+            
+            let info_block = Block::default()
+                .title("Node Information")
+                .borders(Borders::ALL);
+                
+            let node_info = format!(
+                "Layer: {}\n\
+                 Index: {}\n\
+                 Type: {:?}\n\
+                 Activation: {:.4}\n\
+                 Connections: {}",
+                node.layer_index,
+                node.original_index,
+                node.node_type,
+                node.activation.unwrap_or(0.0),
+                app.network.connections.iter()
+                    .filter(|c| c.from_node_id == node.id || c.to_node_id == node.id)
+                    .count()
+            );
+            
+            let paragraph = Paragraph::new(node_info)
+                .block(info_block);
+                
+            f.render_widget(paragraph, area);
+        }
+    }
+}
 
-
-
+/* Old metrics rendering 
 fn render_metrics(f: &mut Frame, app: &App, area: Rect) {
     let metrics_block = Block::default()
         .title("Metrics")
@@ -1097,6 +1186,7 @@ fn render_metrics(f: &mut Frame, app: &App, area: Rect) {
             ScriptState::Error(_) => "Error",
             ScriptState::Completed => "Complete",
             ScriptState::Stopped => "Stopped",
+            ScriptState::Paused => "Paused",
         }
     );
 
@@ -1131,7 +1221,206 @@ fn render_metrics(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(paragraph, inner_area);
 }
+*/ 
 
+fn render_metrics(f: &mut Frame, app: &App, area: Rect) {
+    let metrics_block = Block::default()
+        .title("Training Status")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(match &app.script_state {
+            ScriptState::Error(_) => Color::Red,
+            ScriptState::Completed => Color::Green,
+            ScriptState::Stopped => Color::Yellow,
+            _ => if app.is_paused {Color::Yellow} else {Color::White},
+        }));
+
+    let inner_area = metrics_block.inner(area);
+    f.render_widget(metrics_block, area);
+
+    // Build status section
+    let mut text = Vec::new();
+    
+    // Training status with color
+    let status_text = match &app.script_state {
+        ScriptState::Starting => Span::styled("Starting", Style::default().fg(Color::Blue)),
+        ScriptState::Running => {
+            if app.is_paused {
+                Span::styled("Paused", Style::default().fg(Color::Yellow))
+            } else {
+                Span::styled("Running", Style::default().fg(Color::Green))
+            }
+        },
+        ScriptState::Error(_) => Span::styled("Error", Style::default().fg(Color::Red)),
+        ScriptState::Completed => Span::styled("Complete", Style::default().fg(Color::Green)),
+        ScriptState::Stopped => Span::styled("Stopped", Style::default().fg(Color::LightRed)),
+        ScriptState::Paused => Span::styled("Paused", Style::default().fg(Color::Yellow)),
+    };
+
+    text.push(Line::from(vec![
+        Span::raw("Status: "),
+        status_text
+    ]));
+
+    // Framework info
+    let framework_text = match &app.model_architecture.framework {
+        Some(MLFramework::PyTorch) => "PyTorch",
+        Some(MLFramework::TensorFlow) => "TensorFlow",
+        Some(MLFramework::JAX) => "JAX",
+        Some(MLFramework::Keras) => "Keras",
+        Some(MLFramework::Unknown) => "Unknown",
+        None => "Not Detected",
+    };
+    text.push(Line::from(vec![
+        Span::raw("Framework: "),
+        Span::styled(framework_text, Style::default().fg(Color::Cyan))
+    ]));
+
+    // Add model summary
+    text.push(Line::from(""));
+    text.push(Line::from("Model Summary:"));
+    
+    let total_params = app.model_architecture.total_parameters;
+    let param_text = if total_params > 1_000_000 {
+        format!("{:.2}M", total_params as f64 / 1_000_000.0)
+    } else if total_params > 1_000 {
+        format!("{:.2}K", total_params as f64 / 1_000.0)
+    } else {
+        format!("{}", total_params)
+    };
+    
+    let layer_count = app.model_architecture.layers.len();
+    
+    text.push(Line::from(vec![
+        Span::raw("Layers: "),
+        Span::styled(format!("{}", layer_count), Style::default().fg(Color::White))
+    ]));
+    
+    text.push(Line::from(vec![
+        Span::raw("Parameters: "),
+        Span::styled(param_text, Style::default().fg(Color::White))
+    ]));
+
+    // Add progress information if available
+    if let (Some(epoch), Some(total_epochs)) = (app.current_epoch, app.total_epochs) {
+        let progress = (epoch as f64 / total_epochs as f64 * 100.0).round() as usize;
+        text.push(Line::from(""));
+        text.push(Line::from(vec![
+            Span::raw("Progress: "),
+            Span::styled(
+                format!("Epoch {}/{} ({}%)", epoch, total_epochs, progress),
+                Style::default().fg(Color::Green)
+            )
+        ]));
+    }
+
+    // Add training time if available
+    if let Some(start_time) = app.start_time {
+        let elapsed = start_time.elapsed();
+        text.push(Line::from(vec![
+            Span::raw("Training Time: "),
+            Span::styled(
+                format!(
+                    "{:02}:{:02}:{:02}", 
+                    elapsed.as_secs() / 3600,
+                    (elapsed.as_secs() % 3600) / 60,
+                    elapsed.as_secs() % 60
+                ),
+                Style::default().fg(Color::White)
+            )
+        ]));
+    }
+
+    // Add current metrics
+    text.push(Line::from(""));
+    text.push(Line::from(vec![
+        Span::styled("Current Metrics:", Style::default().fg(Color::White))
+    ]));
+    
+    for (name, value) in &app.current_metrics {
+        text.push(Line::from(vec![
+            Span::raw(format!("{}: ", name)),
+            Span::styled(format_value(value), 
+                Style::default().fg(if name == "loss" { Color::Red } else { Color::Green }))
+        ]));
+    }
+
+    let paragraph = Paragraph::new(text)
+        .alignment(Alignment::Left)
+        .wrap(Wrap { trim: true });
+
+    f.render_widget(paragraph, inner_area);
+}
+
+
+
+fn render_metrics_chart(f: &mut Frame, app: &App, area: Rect) {
+    let chart_block = Block::default()
+        .title("Training Metrics")
+        .borders(Borders::ALL);
+    
+    let inner_area = chart_block.inner(area);
+    f.render_widget(chart_block, area);
+
+    // Prepare data for the chart
+    let loss_data: Vec<(f64, f64)> = app.metrics_history.iter()
+        .enumerate()
+        .map(|(i, m)| (i as f64, m.loss))
+        .collect();
+        
+    let accuracy_data: Vec<(f64, f64)> = app.metrics_history.iter()
+        .enumerate()
+        .map(|(i, m)| (i as f64, m.accuracy))
+        .collect();
+    
+    // Skip rendering if no data yet
+    if loss_data.is_empty() {
+        let text = "Waiting for training data...";
+        let paragraph = Paragraph::new(text)
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Gray));
+        f.render_widget(paragraph, inner_area);
+        return;
+    }
+    
+    // Find min/max for scaling
+    let max_loss = loss_data.iter().map(|(_, v)| *v).fold(0.0, f64::max);
+    let min_loss = loss_data.iter().map(|(_, v)| *v).fold(max_loss, f64::min);
+    
+    let max_acc = accuracy_data.iter().map(|(_, v)| *v).fold(0.0, f64::max);
+    let max_points = loss_data.len() as f64;
+    
+    // Create datasets
+    let loss_dataset = Dataset::default()
+        .name("Loss")
+        .marker(Marker::Braille)
+        .graph_type(GraphType::Line)
+        .style(Style::default().fg(Color::Red))
+        .data(&loss_data);
+        
+    let accuracy_dataset = Dataset::default()
+        .name("Accuracy")
+        .marker(Marker::Braille)
+        .graph_type(GraphType::Line)
+        .style(Style::default().fg(Color::Green))
+        .data(&accuracy_data);
+    
+    // Render chart with proper scaling
+    let chart = Chart::new(vec![loss_dataset, accuracy_dataset])
+        .x_axis(Axis::default()
+            .title("Steps")
+            .style(Style::default().fg(Color::Gray))
+            .bounds([0.0, max_points])
+            .labels(vec!["0".to_string(), format!("{}", max_points as usize)]))
+        .y_axis(Axis::default()
+            .title("Value")
+            .style(Style::default().fg(Color::Gray))
+            .bounds([min_loss.min(0.0), max_loss.max(max_acc).max(1.0)])
+            .labels(vec!["0".to_string(), format!("{:.2}", max_loss.max(max_acc))]));
+            
+    f.render_widget(chart, inner_area);
+}
+
+/* old layout logic 
 fn render_layout(f: &mut Frame, app: &App) {
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -1248,12 +1537,114 @@ fn render_layout(f: &mut Frame, app: &App) {
     */
 
 }
+*/ 
+
+fn render_layer_info(f: &mut Frame, app: &App, area: Rect) {
+    let layers_block = Block::default()
+        .title("Network Layers")
+        .borders(Borders::ALL);
+    
+    let inner_area = layers_block.inner(area);
+    f.render_widget(layers_block, area);
+    
+    let mut layer_texts = Vec::new();
+    let mut total_params = 0;
+    
+    for (idx, layer) in app.model_architecture.layers.iter().enumerate() {
+        let layer_stats = format!(
+            "{}: {} ({})",
+            idx,
+            layer.layer_type,
+            format_params(layer.parameters)
+        );
+        layer_texts.push(layer_stats);
+        total_params += layer.parameters;
+    }
+    
+    layer_texts.push(format!("Total params: {}", format_params(total_params)));
+    
+    let paragraph = Paragraph::new(layer_texts.join("\n"))
+        .alignment(Alignment::Left);
+        
+    f.render_widget(paragraph, inner_area);
+}
+
+fn format_params(params: usize) -> String {
+    if params < 1_000 {
+        format!("{}", params)
+    } else if params < 1_000_000 {
+        format!("{:.2}K", params as f64 / 1_000.0)
+    } else {
+        format!("{:.2}M", params as f64 / 1_000_000.0)
+    }
+}
+
+fn render_layout(f: &mut Frame, app: &App) {
+    let terminal_size = f.area();
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(60),  // Top section
+            Constraint::Percentage(40),  // Bottom section
+        ])
+        .split(f.area());
+
+    let top_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(70),  // Left - model visualization
+            Constraint::Percentage(30),  // Right - metrics panel
+        ])
+        .split(main_chunks[0]);
+
+    let bottom_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50),  // Left - metrics plot
+            Constraint::Percentage(50),  // Right - log/system metrics
+        ])
+        .split(main_chunks[1]);
+        
+    let right_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(50),  // Top - training log
+            Constraint::Percentage(50),  // Bottom - system metrics
+        ])
+        .split(bottom_chunks[1]);
+
+    // Render the network diagram
+    let network_canvas = app.network.draw();
+    f.render_widget(
+        network_canvas.block(
+            Block::default()
+                .title("Model Architecture")
+                .borders(Borders::ALL)
+        ),
+        top_chunks[0]
+    );
+    
+    // Render layer info and metrics
+    render_metrics(f, app, top_chunks[1]);
+    
+    // If a node is selected, show details
+    if app.selected_node.is_some() {
+        render_node_info(f, app, bottom_chunks[0]);
+    } else {
+        // Show metrics plot when no node selected
+        render_metrics_chart(f, app, bottom_chunks[0]);
+    }
+    
+    // Training log and system metrics
+    render_training_progress(f, app, right_chunks[0]);
+    render_system_metrics(f, app, right_chunks[1]);
+}
 
 fn run_app(python: PythonRunner) -> Result<()> {
     // Terminal setup
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, event::EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -1298,7 +1689,8 @@ fn run_app(python: PythonRunner) -> Result<()> {
                 app.update_script_state(ScriptState::Error(error));
             }
             ScriptOutput::Terminated => {
-                if !matches!(app.script_state, ScriptState::Error(_)) {
+                if !matches!(app.script_state, ScriptState::Error(_)) &&
+                   !matches!(app.script_state, ScriptState::Stopped) {
                     app.update_script_state(ScriptState::Completed);
                 }
             }
@@ -1317,6 +1709,91 @@ fn run_app(python: PythonRunner) -> Result<()> {
                 if app.handle_key(key.code) {
                     break;
                 }
+            }
+        }
+        if event::poll(Duration::from_millis(10))? {
+            match event::read()? {
+                Event::Mouse(mouse) => {
+                    let terminal_size = terminal.size()?;
+                    match mouse.kind {
+                        // No handling for MouseEventKind::Moved
+                        event::MouseEventKind::Down(event::MouseButton::Left) => {
+                            // Handle click selection
+                            app.handle_mouse_click(
+                                mouse.column,
+                                mouse.row,
+                                terminal_size.width,
+                                terminal_size.height
+                            );
+                        },
+                        event::MouseEventKind::ScrollDown => {
+                            // Scroll down in logs or other scrollable elements
+                            if app.show_error_logs {
+                                app.scroll_error_log(1);
+                            } else {
+                                app.scroll_training_log(1);
+                            }
+                        },
+                        event::MouseEventKind::ScrollUp => {
+                            // Scroll up in logs or other scrollable elements
+                            if app.show_error_logs {
+                                app.scroll_error_log(-1);
+                            } else {
+                                app.scroll_training_log(-1);
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                // Add keyboard navigation for nodes
+                Event::Key(key) => {
+                    match key.code {
+                        KeyCode::Tab => {
+                            // Cycle through nodes
+                            if app.network.nodes.is_empty() {
+                                app.selected_node = None;
+                            } else {
+                                let next = match app.selected_node {
+                                    None => Some(0),
+                                    Some(current) => {
+                                        if current + 1 < app.network.nodes.len() {
+                                            Some(current + 1)
+                                        } else {
+                                            None // Cycle back to no selection
+                                        }
+                                    }
+                                };
+                                app.selected_node = next;
+                            }
+                        },
+                        KeyCode::Char('n') => {
+                            // Next node in same layer
+                            if let Some(current_idx) = app.selected_node {
+                                if current_idx < app.network.nodes.len() {
+                                    let current = &app.network.nodes[current_idx];
+                                    let layer = current.layer_index;
+                                    
+                                    // Find next node in same layer
+                                    let next = app.network.nodes.iter().enumerate()
+                                        .filter(|(_, n)| n.layer_index == layer && n.id > current.id)
+                                        .map(|(i, _)| i)
+                                        .next();
+                                        
+                                    if let Some(next_idx) = next {
+                                        app.selected_node = Some(next_idx);
+                                    }
+                                }
+                            }
+                        },
+                        // Add other keyboard event handling...
+                        _ => {
+                            if app.handle_key(key.code) {
+                                break;
+                            }
+                        }
+                    }
+                },
+                _ => {}
             }
         }
 

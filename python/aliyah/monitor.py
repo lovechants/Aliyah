@@ -113,17 +113,22 @@ class TrainingMonitor:
         current_time = time.time()
         if current_time - self._last_batch_update < 0.1:
             return 
-        metrics = {
-            "loss": loss,
-            "accuracy": accuracy,
-            **extra_metrics  # Allow for additional metrics
-        }
-        
-        self.send_update("batch", {
+
+        if isinstance(loss, dict):
+            metrics = loss
+        else:
+            metrics = {
+                    "loss": float(loss),
+                    "accuracy": float(accuracy),
+            }
+            for key, value in extra_metrics.items():
+                metrics[key] = float(value) if isinstance(value, (int, float)) else value 
+        self.send_update("batch",{
             "batch": batch_idx,
-            "metrics": metrics
+            "metrics": metrics,
         })
         self._last_batch_update = current_time
+        
 
     def log_epoch(self, epoch: int, loss: float, accuracy: float, **extra_metrics):
         """Send epoch metrics"""

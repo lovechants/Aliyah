@@ -7,6 +7,7 @@ pub enum ScriptState {
     Error(ScriptError),
     Completed,
     Stopped,
+    Paused,
 }
 
 #[derive(Debug, Clone)]
