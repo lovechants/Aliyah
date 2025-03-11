@@ -1,7 +1,3 @@
-#[allow(unused_imports)]
-#[allow(warnings)]
-#[allow(unused_variables)]
-
 use log::{debug, error, log_enabled, info, Level};
 use env_logger;
 use anyhow::Result;
@@ -1349,10 +1345,23 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     if cli.debug {
-        env_logger::init();
+        env_logger::Builder::new()
+            .filter_level(log::LevelFilter::Debug)
+            .format_timestamp(None)
+            .format_target(false)
+            .init();
+    } else {
+        env_logger::Builder::new()
+            .filter_level(log::LevelFilter::Error)
+            .format_timestamp(None)
+            .format_target(false)
+            .init();
     }
 
     let python = PythonRunner::new(cli.script, cli.script_args)?;
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
     let result = run_app(python);
     
     result

@@ -2,6 +2,17 @@
 name = "aliyah"
 version = "0.1.0"
 edition = "2021"
+description = "Terminal based machien learning training monitor"
+authors  = ["j <n50513186@gmail.com | j@07-i.co>"]
+repository = "https://github.com/lovechants/Aliyah"
+readme = "README.md"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+opt-level = 3
 
 [dependencies]
 anyhow = "1.0.95"
