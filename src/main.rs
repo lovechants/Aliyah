@@ -299,7 +299,7 @@ impl NetworkLayout {
         self.connections.iter_mut()
             .find(|c| c.from_node_id == from_node.id && c.to_node_id == to_node.id)
     }
-
+    /*
     pub fn draw<'a>(&'a self) -> Canvas<'a, impl Fn(&mut ratatui::widgets::canvas::Context<'_>) + 'a> {
         Canvas::default()
             .paint(|ctx| {
@@ -412,6 +412,138 @@ impl NetworkLayout {
                         coords: &points,
                         color,
                     });
+                }
+            })
+            .x_bounds([self.bounds.0, self.bounds.2])
+            .y_bounds([self.bounds.1, self.bounds.3])
+    }
+    */ 
+
+    pub fn draw<'a>(&'a self) -> Canvas<'a, impl Fn(&mut ratatui::widgets::canvas::Context<'_>) + 'a> {
+        Canvas::default()
+            .paint(|ctx| {
+                // Draw connections with weight visualization
+                for conn in &self.connections {
+                    if let (Some(from), Some(to)) = (
+                        self.nodes.iter().find(|n| n.id == conn.from_node_id),
+                        self.nodes.iter().find(|n| n.id == conn.to_node_id)
+                    ) {
+                        // Determine line thickness and color based on weight and activity
+                        let weight_abs = conn.weight.abs();
+                        let weight_intensity = ((weight_abs * 200.0) as u8).min(255);
+                        
+                        let color = if conn.active {
+                            if conn.weight > 0.0 {
+                                Color::Rgb(0, weight_intensity, weight_intensity) // Positive weights in cyan
+                            } else {
+                                Color::Rgb(weight_intensity, 0, 0) // Negative weights in red
+                            }
+                        } else {
+                            Color::DarkGray
+                        };
+
+                        // Draw connection line
+                        ctx.draw(&CanvasLine {
+                            x1: from.x,
+                            y1: from.y,
+                            x2: to.x,
+                            y2: to.y,
+                            color,
+                        });
+
+                        // Add signal flow animation if active
+                        if conn.active {
+                            let t = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as f64 / 1000.0;
+                            
+                            // Animate 3 particles along the connection
+                            for i in 0..3 {
+                                let phase = ((t * 2.0) + (i as f64 * 0.33)) % 1.0;
+                                let x = from.x + (to.x - from.x) * phase;
+                                let y = from.y + (to.y - from.y) * phase;
+                                
+                                ctx.draw(&Points {
+                                    coords: &[(x, y)],
+                                    color: if conn.weight > 0.0 {
+                                        Color::Cyan
+                                    } else {
+                                        Color::Red
+                                    },
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Draw nodes with more detailed visualization
+                for node in &self.nodes {
+                    // Determine node size based on type and activation
+                    let base_radius = match node.node_type {
+                        NodeType::Input => 0.07,
+                        NodeType::Hidden => 0.06,
+                        NodeType::Output => 0.07,
+                    };
+                    
+                    // Scale radius slightly based on activation if available
+                    let radius = if let Some(act) = node.activation {
+                        base_radius * (1.0 + act.abs() * 0.5)
+                    } else {
+                        base_radius
+                    };
+                    
+                    // Generate points for circle
+                    let points = self.generate_circle_points(node.x, node.y, radius, 16);
+                    
+                    // Determine node color based on type and activation
+                    let color = match node.node_type {
+                        NodeType::Input => {
+                            if let Some(act) = node.activation {
+                                let intensity = ((act * 200.0) as u8).min(255).max(100);
+                                Color::Rgb(100, 100, intensity) // Blue with activation intensity
+                            } else {
+                                Color::Blue
+                            }
+                        },
+                        NodeType::Hidden => {
+                            if let Some(act) = node.activation {
+                                if act > 0.0 {
+                                    let intensity = ((act * 200.0) as u8).min(255).max(50);
+                                    Color::Rgb(intensity, intensity, intensity) // White with activation intensity
+                                } else {
+                                    Color::DarkGray
+                                }
+                            } else {
+                                Color::DarkGray
+                            }
+                        },
+                        NodeType::Output => {
+                            if let Some(act) = node.activation {
+                                let intensity = ((act * 200.0) as u8).min(255).max(100);
+                                Color::Rgb(0, intensity, 0) // Green with activation intensity
+                            } else {
+                                Color::Green
+                            }
+                        }
+                    };
+
+                    // Draw node
+                    ctx.draw(&Points {
+                        coords: &points,
+                        color,
+                    });
+                    
+                    // Draw outline for activated nodes
+                    if let Some(act) = node.activation {
+                        if act.abs() > 0.3 {
+                            let outline = self.generate_circle_points(node.x, node.y, radius * 1.1, 20);
+                            ctx.draw(&Points {
+                                coords: &outline,
+                                color: Color::White,
+                            });
+                        }
+                    }
                 }
             })
             .x_bounds([self.bounds.0, self.bounds.2])
@@ -900,7 +1032,8 @@ impl App {
             "e     : Toggle error log",
             "↑/↓   : Scroll error log",
             "c     : Clear error log",
-            "h     : Show this help",
+            "h     : Show help",
+            "TAB/n : Cycle through nodes",
             "======================",
         ];
 
@@ -1132,34 +1265,82 @@ fn render_training_progress(f: &mut Frame, app: &App, area: Rect) {
 
 
 fn render_node_info(f: &mut Frame, app: &App, area: Rect) {
+    let node_block = Block::default()
+        .title("Node Information")
+        .borders(Borders::ALL);
+        
+    let inner_area = node_block.inner(area);
+    f.render_widget(node_block, area);
+    
     if let Some(node_idx) = app.selected_node {
         if node_idx < app.network.nodes.len() {
             let node = &app.network.nodes[node_idx];
             
-            let info_block = Block::default()
-                .title("Node Information")
-                .borders(Borders::ALL);
+            // Count input and output connections
+            let input_conn_count = app.network.connections.iter()
+                .filter(|c| c.to_node_id == node.id)
+                .count();
                 
-            let node_info = format!(
-                "Layer: {}\n\
-                 Index: {}\n\
-                 Type: {:?}\n\
-                 Activation: {:.4}\n\
-                 Connections: {}",
-                node.layer_index,
-                node.original_index,
-                node.node_type,
-                node.activation.unwrap_or(0.0),
-                app.network.connections.iter()
-                    .filter(|c| c.from_node_id == node.id || c.to_node_id == node.id)
-                    .count()
-            );
+            let output_conn_count = app.network.connections.iter()
+                .filter(|c| c.from_node_id == node.id)
+                .count();
+            
+            let node_type = match node.node_type {
+                NodeType::Input => "Input",
+                NodeType::Hidden => "Hidden",
+                NodeType::Output => "Output",
+            };
+            
+            let node_info = vec![
+                Line::from(vec![
+                    Span::raw("Layer: "),
+                    Span::styled(format!("{}", node.layer_index), Style::default().fg(Color::Cyan))
+                ]),
+                Line::from(vec![
+                    Span::raw("Index: "),
+                    Span::styled(format!("{}", node.original_index), Style::default().fg(Color::White))
+                ]),
+                Line::from(vec![
+                    Span::raw("Type: "),
+                    Span::styled(node_type, Style::default().fg(match node.node_type {
+                        NodeType::Input => Color::Blue,
+                        NodeType::Hidden => Color::White,
+                        NodeType::Output => Color::Green,
+                    }))
+                ]),
+                Line::from(vec![
+                    Span::raw("Activation: "),
+                    Span::styled(
+                        format!("{:.4}", node.activation.unwrap_or(0.0)),
+                        Style::default().fg(
+                            if node.activation.unwrap_or(0.0) > 0.5 {
+                                Color::Green
+                            } else {
+                                Color::White
+                            }
+                        )
+                    )
+                ]),
+                Line::from(vec![
+                    Span::raw("Connections: "),
+                    Span::styled(format!("{} in, {} out", input_conn_count, output_conn_count), 
+                        Style::default().fg(Color::White))
+                ]),
+            ];
             
             let paragraph = Paragraph::new(node_info)
-                .block(info_block);
+                .alignment(Alignment::Left);
                 
-            f.render_widget(paragraph, area);
+            f.render_widget(paragraph, inner_area);
         }
+    } else {
+        // No node selected
+        let text = "No node selected\nUse Tab key to select nodes";
+        let paragraph = Paragraph::new(text)
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Gray));
+            
+        f.render_widget(paragraph, inner_area);
     }
 }
 
