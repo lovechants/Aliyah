@@ -25,6 +25,10 @@ c     : Clear error log
 
 h     : Show this help
 
+tab/n : Show node information 
+
+click : Switch training and node panel 
+
 ---
 
 #### Pre-Alpha Release 
@@ -40,6 +44,18 @@ data folder is for example scripts only
 ---
 
 ![MINST Rendering](example.png)
+
+---
+
+## Current TODO 
+
+- [ ] Fix mouse input cature bug when you exit (if clicked)
+- [ ] Fix plotting 
+- [ ] Make visualization better 
+- [ ] Update examples 
+- [ ] Test custom metrics (if its properly working now)
+
+
 
 ---
 
@@ -67,7 +83,7 @@ Roadmap to 1.0 alpha
 - [x] ZMQ socket integration
 - [x] Command sending system
 - [x] Metric receiving and parsing
-- [ ] Update existing UI components for new data flow
+- [x] Update existing UI components for new data flow
 - [x] Error handling and connection management
 
 ## 4. Core Features for 0.1a
@@ -91,12 +107,12 @@ Roadmap to 1.0 alpha
 
 ## 6. Documentation
 - [ ] Usage guide
-- [ ] API documentation
 - [ ] Example implementations
 - [ ] Installation instructions
 - [ ] Clean up codebase (again)
 
 ## Future Features (Post 1.0a)
+- User configuration 
 - Layer-specific visualization
 - Advanced GPU monitoring
 - Custom metric tracking

@@ -799,6 +799,27 @@ impl App {
                                 self.training_scroll = self.training_scroll.saturating_sub(500);
                             }
                         }
+                        if let Some(metrics) = data.get("metrics").and_then(|v| v.as_object()) {
+                            // Update batch number if available
+                            if let Some(batch) = data.get("batch").and_then(|v| v.as_u64()) {
+                                self.current_batch = Some(batch as usize);
+                            }
+                            
+                            // Periodically add to metrics history (not every batch to avoid too many points)
+                            if self.current_batch.unwrap_or(0) % 10 == 0 {
+                                if let (Some(loss), Some(accuracy)) = (
+                                    metrics.get("loss").and_then(|v| v.as_f64()),
+                                    metrics.get("accuracy").and_then(|v| v.as_f64())
+                                ) {
+                                    // Add to metrics history
+                                    self.metrics_history.push(TrainingMetrics {
+                                        epoch: self.current_epoch.unwrap_or(0),
+                                        loss,
+                                        accuracy,
+                                    });
+                                }
+                            }
+                        }
                     }
                 }
             },
@@ -832,6 +853,22 @@ impl App {
 
                         // Add a blank line after epoch metrics for better readability
                         self.output_lines.push(String::new());
+                    }
+                    if let Some(metrics) = data.get("metrics").and_then(|v| v.as_object()) {
+                        // Add new metrics history entry
+                        if let (Some(loss), Some(accuracy)) = (
+                            metrics.get("loss").and_then(|v| v.as_f64()),
+                            metrics.get("accuracy").and_then(|v| v.as_f64())
+                        ) {
+                            // Add to metrics history
+                            self.metrics_history.push(TrainingMetrics {
+                                epoch: self.current_epoch.unwrap_or(0),
+                                loss,
+                                accuracy,
+                            });
+                            
+                            log_to_file(&format!("Added metrics to history: loss={}, accuracy={}", loss, accuracy));
+                        }
                     }
                 }
             },
@@ -1034,6 +1071,7 @@ impl App {
             "c     : Clear error log",
             "h     : Show help",
             "TAB/n : Cycle through nodes",
+            "Click : Switch node panel ",
             "======================",
         ];
 
