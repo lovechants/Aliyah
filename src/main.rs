@@ -9,7 +9,7 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect, Margin},
-    style::{Color, Style},
+    style::{Color, Style, Modifier},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, GraphType, Dataset, canvas::{Canvas, Context, Line as CanvasLine, Points}},
     widgets::{Chart, Axis, Wrap},
@@ -91,6 +91,16 @@ struct TrainingMetrics {
     accuracy: f64,
 }
 
+#[derive(Debug, Clone)]
+struct ModelPrediction {
+    epoch: usize, 
+    timestamp: Instant,
+    values: Vec<f64>,
+    labels: Option<Vec<String>>,
+    description: String, // Provide context for the output will be dependent on user 
+}
+
+
 struct App {
     output_lines: Vec<String>,
     metrics_history: Vec<TrainingMetrics>,
@@ -118,6 +128,9 @@ struct App {
     current_batch: Option<usize>,
     selected_node: Option<usize>,
     hover_position: Option<(f64, f64)>,
+    show_model_output: bool,
+    model_prediction: Option<ModelPrediction>,
+    final_elapsed: Option<Duration>,
 }
 
 #[derive(Debug, Clone)]
@@ -629,6 +642,9 @@ impl App {
             last_viz_update: Instant::now(),
             selected_node: None,
             hover_position: None,
+            model_prediction: None,
+            show_model_output: false,
+            final_elapsed: None,
         }
     }
     fn log_recieved_update(&self, update: &Update) {
@@ -638,6 +654,22 @@ impl App {
                 update.timestamp,
                 update.data
         ));
+    }
+
+    fn toggle_output_view(&mut self) {
+        self.show_model_output = !self.show_model_output;
+    }
+
+    fn set_model_prediction(&mut self, values: Vec<f64>, labels: Option<Vec<String>>, description: String){
+        self.model_prediction = Some(ModelPrediction {
+            epoch: self.current_epoch.unwrap_or(0),
+            timestamp: Instant::now(),
+            values,
+            labels,
+            description,
+        });
+        
+        self.output_lines.push("Model prediction captured".to_string());
     }
 
 
@@ -896,6 +928,32 @@ impl App {
                     }
                 }
             },
+            "prediction" => {
+                if let serde_json::Value::Object(data) = update.data {
+                    if let Some(values_array) = data.get("values").and_then(|v| v.as_array()) {
+                        let values: Vec<f64> = values_array.iter()
+                            .filter_map(|v| v.as_f64())
+                            .collect();
+                        
+                        // Extract optional labels
+                        let labels = data.get("labels")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect::<Vec<String>>()
+                            });
+                        
+                        // Extract description if provided
+                        let description = data.get("description")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Model prediction")
+                            .to_string();
+                        
+                        self.set_model_prediction(values, labels, description);
+                    }
+                }
+            },
             _ => {
                 log_to_file(&format!("Unknown update type: {}", update.type_));
             }
@@ -981,6 +1039,10 @@ impl App {
                 } else { self.scroll_training_log(1); }
                 false
             }
+            KeyCode::Char('o') => {
+                self.toggle_output_view();
+                false
+            },
 
 
             _ => false,
@@ -996,63 +1058,8 @@ impl App {
      * needs to be cleaned up way later 
      */ 
     fn update_metric(&mut self, name: &str, value: serde_json::Value) {
-        /* old logic before hashmap 
-        log_to_file(&format!("Before update: {:?}", self.current_metrics));
-        // Update the metric immediately
-        if self.current_metrics.is_none() {
-            self.current_metrics = Some(TrainingMetrics {
-                epoch: 0,
-                loss: 0.0,
-                accuracy: 0.0,
-            });
-        } 
-        if let Some(ref mut metrics) = self.current_metrics {
-            match name {
-                "loss" => metrics.loss = value,
-                "accuracy" => metrics.accuracy = value,
-                _ => {}
-            }
-        }
-        //log_to_file(&format!("After update: {:?}", self.current_metrics));*/ 
         self.current_metrics.insert(name.to_string(), value.clone());
     }
-    /*
-    fn update_batch_metrics(&mut self, metrics: &serde_json::Map<String, serde_json::Value>) {
-        log_to_file(&format!("Updating batch metrics: {:?}", metrics));
-        if let (Some(loss), Some(accuracy)) = (
-            metrics.get("loss").and_then(|v| v.as_f64()),
-            metrics.get("accuracy").and_then(|v| v.as_f64())
-        ) /*{
-            // Might want to store these in a vector or update UI directly: Figure it out later -> hashmap 
-            if self.current_metrics.is_none() {
-                self.current_metrics = Some(TrainingMetrics {
-                    epoch: 0,
-                    loss,
-                    accuracy,
-                });
-            }
-        log_to_file(&format!("Updated metrics state: {:?}", self.current_metrics));
-        } 
-        */
-    }
-
-
-    fn update_epoch_metrics(&mut self, epoch: usize, metrics: &serde_json::Map<String, serde_json::Value>) {
-        if let (Some(loss), Some(accuracy)) = (
-            metrics.get("loss").and_then(|v| v.as_f64()),
-            metrics.get("accuracy").and_then(|v| v.as_f64())
-        ) {
-            let metrics = TrainingMetrics {
-                epoch,
-                loss,
-                accuracy,
-            };
-            
-            self.metrics_history.push(metrics.clone());
-            self.current_metrics = Some(metrics);
-        }
-    }
-    */
 
     fn scroll_error_log(&mut self, delta: i32) {
         let new_scroll = (self.error_scroll as i32 + delta).max(0) as usize;
@@ -1091,6 +1098,13 @@ impl App {
         if let ScriptState::Error(error) = &state {
             self.log_error(&error.to_string());
         }
+        if matches!(state, ScriptState::Completed | ScriptState::Stopped) && 
+               !matches!(self.script_state, ScriptState::Completed | ScriptState::Stopped) {
+                if let Some(start_time) = self.start_time {
+                    self.final_elapsed = Some(start_time.elapsed());
+                }
+            }
+        self.script_state = state;
     }
 
     fn update_architecture(&mut self, architecture: ModelArchitecture) {
@@ -1382,66 +1396,6 @@ fn render_node_info(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-/* Old metrics rendering 
-fn render_metrics(f: &mut Frame, app: &App, area: Rect) {
-    let metrics_block = Block::default()
-        .title("Metrics")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(match &app.script_state {
-            ScriptState::Error(_) => Color::Red,
-            ScriptState::Completed => Color::Green,
-            ScriptState::Stopped => Color::LightCyan,
-            _ => if app.is_paused {Color::Yellow } else {Color::White},
-        }));
-
-    let inner_area = metrics_block.inner(area);
-    f.render_widget(metrics_block, area);
-
-    // Build status section
-    let mut display_text = format!("Status: {}\n",
-        match &app.script_state {
-            ScriptState::Starting => "Starting",
-            ScriptState::Running => if app.is_paused { "Paused" } else { "Running" },
-            ScriptState::Error(_) => "Error",
-            ScriptState::Completed => "Complete",
-            ScriptState::Stopped => "Stopped",
-            ScriptState::Paused => "Paused",
-        }
-    );
-
-    // Add framework info
-    display_text.push_str(&format!("{}\n\n",
-        match &app.model_architecture.framework {
-            Some(MLFramework::PyTorch) => "Framework: PyTorch",
-            Some(MLFramework::TensorFlow) => "Framework: TensorFlow",
-            Some(MLFramework::JAX) => "Framework: JAX",
-            Some(MLFramework::Keras) => "Framework: Keras",
-            Some(MLFramework::Unknown) => "Framework: Unknown",
-            None => "Framework: Not Detected",
-        }
-    ));
-
-    // Add progress information if available
-    if let (Some(epoch), Some(total_epochs)) = (app.current_epoch, app.total_epochs) {
-        display_text.push_str(&format!("Progress: Epoch {}/{}\n", epoch, total_epochs));
-    }
-
-    // Add current metrics
-    display_text.push_str("Current Metrics:\n");
-    for (name, value) in &app.current_metrics {
-        display_text.push_str(&format!("{}: {}\n", name, format_value(value)));
-    }
-
-    let paragraph = Paragraph::new(display_text)
-        .style(Style::default().fg(match &app.script_state {
-            ScriptState::Error(_) => Color::Red,
-            _ => Color::White,
-        }));
-
-    f.render_widget(paragraph, inner_area);
-}
-*/ 
-
 fn render_metrics(f: &mut Frame, app: &App, area: Rect) {
     let metrics_block = Block::default()
         .title("Training Status")
@@ -1532,22 +1486,48 @@ fn render_metrics(f: &mut Frame, app: &App, area: Rect) {
         ]));
     }
 
-    // Add training time if available
-    if let Some(start_time) = app.start_time {
-        let elapsed = start_time.elapsed();
-        text.push(Line::from(vec![
-            Span::raw("Training Time: "),
-            Span::styled(
+    if let Some(start_time) = app.start_time { //TODO fix timer for paused state 
+        let elapsed = match app.script_state {
+            ScriptState::Completed | ScriptState::Stopped => {
+                static mut FINAL_TIME: Option<Duration> = None;
+                
+                unsafe {
+                    if FINAL_TIME.is_none() {
+                        FINAL_TIME = Some(start_time.elapsed());
+                    }
+                    FINAL_TIME.unwrap_or(start_time.elapsed())
+                }
+            },
+            _ => start_time.elapsed()
+        };
+        
+        // Format with or without "(final)" tag
+        let time_text = match app.script_state {
+            ScriptState::Completed | ScriptState::Stopped => {
+                format!(
+                    "{:02}:{:02}:{:02} (final)", 
+                    elapsed.as_secs() / 3600,
+                    (elapsed.as_secs() % 3600) / 60,
+                    elapsed.as_secs() % 60
+                )
+            },
+            _ => {
                 format!(
                     "{:02}:{:02}:{:02}", 
                     elapsed.as_secs() / 3600,
                     (elapsed.as_secs() % 3600) / 60,
                     elapsed.as_secs() % 60
-                ),
-                Style::default().fg(Color::White)
-            )
+                )
+            }
+        };
+        
+        text.push(Line::from(vec![
+            Span::raw("Training Time: "),
+            Span::styled(time_text, Style::default().fg(Color::White))
         ]));
     }
+        
+
 
     // Add current metrics
     text.push(Line::from(""));
@@ -1568,7 +1548,7 @@ fn render_metrics(f: &mut Frame, app: &App, area: Rect) {
         .wrap(Wrap { trim: true });
 
     f.render_widget(paragraph, inner_area);
-}
+    }
 
 
 
@@ -1639,125 +1619,6 @@ fn render_metrics_chart(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(chart, inner_area);
 }
 
-/* old layout logic 
-fn render_layout(f: &mut Frame, app: &App) {
-    let main_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(70),
-            Constraint::Percentage(30),
-        ])
-        .split(f.area());
-
-    let top_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(70),
-            Constraint::Percentage(30),
-        ])
-        .split(main_chunks[0]);
-
-    let bottom_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(70),
-            Constraint::Percentage(30),
-        ])
-        .split(main_chunks[1]);
-
-    // Model visualization
-    let model_viz = Block::default()
-        .title("Model Architecture")
-        .borders(Borders::ALL);
-    f.render_widget(model_viz, top_chunks[0]);
-
-    // Metrics panel
-    render_metrics(f, app, top_chunks[1]);
-
-    // Training progress
-    let training_block = Block::default()
-        .title("Training Progress")
-        .borders(Borders::ALL);
-    f.render_widget(training_block, bottom_chunks[0]);
-
-    let main_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(70),
-            Constraint::Percentage(30),
-        ])
-        .split(f.area());
-
-    let top_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(70),
-            Constraint::Percentage(30),
-        ])
-        .split(main_chunks[0]);
-
-    let bottom_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(70),
-            Constraint::Percentage(30),
-        ])
-        .split(main_chunks[1]);
-
-    // Model visualization and metrics panels remain the same
-    /*
-    let model_viz = Block::default()
-        .title("Model Architecture")
-        .borders(Borders::ALL);
-    f.render_widget(model_viz, top_chunks[0]);
-    */
-    let network_canvas = app.network.draw();
-    f.render_widget(
-        network_canvas.block(
-            Block::default()
-                .title("Model Architecture")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(match &app.script_state {
-                    ScriptState::Error(_) => Color::Red,
-                    ScriptState::Completed => Color::Green,
-                    ScriptState::Stopped => Color::Reset,
-                    _ => Color::White,
-                }))
-        ),
-        top_chunks[0]
-    );
-    render_metrics(f, app, top_chunks[1]);
-    render_training_progress(f, app, bottom_chunks[0]);
-
-
-    // Training progress
-    /*
-    let training_block = Block::default()
-        .title("Training Progress")
-        .borders(Borders::ALL);
-    f.render_widget(training_block, bottom_chunks[0]);
-    */
-
-    // System metrics
-    render_system_metrics(f, app, bottom_chunks[1]);
-
-    // Render training output with margin
-    /*
-    if !app.output_lines.is_empty() {
-        let output_text = app.output_lines.join("\n");
-        let paragraph = Paragraph::new(output_text)
-            .style(Style::default().fg(Color::White));
-        let area = Margin {
-            vertical: 1,
-            horizontal: 1,
-        };
-        f.render_widget(paragraph, bottom_chunks[0].inner(area));
-    }
-    */
-
-}
-*/ 
-
 fn render_layer_info(f: &mut Frame, app: &App, area: Rect) {
     let layers_block = Block::default()
         .title("Network Layers")
@@ -1798,7 +1659,149 @@ fn format_params(params: usize) -> String {
     }
 }
 
+fn render_model_output(f: &mut Frame, app: &App, area: Rect) {
+    let output_block = Block::default()
+        .title("Model Prediction")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    
+    let inner_area = output_block.inner(area);
+    f.render_widget(output_block, area);
+    
+    if let Some(prediction) = &app.model_prediction {
+        let mut lines = Vec::new();
+        
+        // Add header information with better styling
+        lines.push(Line::from(vec![
+            Span::styled(
+                prediction.description.clone(), 
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            )
+        ]));
+        
+        lines.push(Line::from(vec![
+            Span::styled(format!("Epoch {}", prediction.epoch), 
+                Style::default().fg(Color::Cyan))
+        ]));
+        
+        lines.push(Line::from(vec![
+            Span::raw("Time: "),
+            Span::styled(
+                format!("{:.1}s ago", 
+                    Instant::now().duration_since(prediction.timestamp).as_secs_f32()),
+                Style::default().fg(Color::Gray)
+            )
+        ]));
+        
+        lines.push(Line::from(""));
+        
+        // Get the highest probability for coloring
+        let max_value = prediction.values.iter()
+            .fold(0.0f64, |max, &val| max.max(val));
+        
+        // Format values
+        if let Some(labels) = &prediction.labels {
+            // Create a prediction table
+            lines.push(Line::from(vec![
+                Span::styled("Class Predictions:", 
+                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+            ]));
+            
+            lines.push(Line::from(vec![
+                Span::styled("Class".to_string(), 
+                    Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(" | "),
+                Span::styled("Probability".to_string(), 
+                    Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(" | "),
+                Span::styled("Bar".to_string(), 
+                    Style::default().add_modifier(Modifier::BOLD)),
+            ]));
+            
+            lines.push(Line::from("-".repeat(inner_area.width as usize - 4)));
+            
+            // Create sorted indices for displaying highest probabilities first
+            let mut indices: Vec<usize> = (0..prediction.values.len()).collect();
+            indices.sort_by(|&i, &j| prediction.values[j].partial_cmp(&prediction.values[i]).unwrap());
+            
+            for &i in indices.iter().take(20) {
+                let value = prediction.values[i];
+                let label = &labels[i];
+                
+                // Determine color based on probability
+                let color = if value > 0.5 {
+                    Color::Green
+                } else if value > 0.2 {
+                    Color::Yellow
+                } else {
+                    Color::Gray
+                };
+                
+                // Create a bar visualization
+                let bar_width = ((inner_area.width as f64 - 30.0) * value).round() as usize;
+                let bar = "█".repeat(bar_width);
+                
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{:<10}", label), Style::default().fg(color)),
+                    Span::raw(" | "),
+                    Span::styled(format!("{:.4}", value), Style::default().fg(color)),
+                    Span::raw(" | "),
+                    Span::styled(bar, Style::default().fg(color)),
+                ]));
+            }
+        } else {
+            // Just show values if no labels
+            lines.push(Line::from("Output Values:"));
+            
+            for (i, value) in prediction.values.iter().enumerate().take(20) {
+                let bar_width = ((inner_area.width as f64 - 20.0) * (*value / max_value)).round() as usize;
+                let bar = "█".repeat(bar_width);
+                
+                lines.push(Line::from(vec![
+                    Span::raw(format!("{:<3}: ", i)),
+                    Span::styled(format!("{:.4}", value), 
+                        Style::default().fg(Color::White)),
+                    Span::raw(" "),
+                    Span::styled(bar, Style::default().fg(Color::Cyan)),
+                ]));
+            }
+        }
+        
+        // If there are more values than we're showing
+        if prediction.values.len() > 20 {
+            lines.push(Line::from(vec![
+                Span::raw(format!("... and {} more values", prediction.values.len() - 20))
+            ]));
+        }
+        
+        // Add help text
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("Press 'o' to return to main view", 
+                Style::default().fg(Color::Gray))
+        ]));
+        
+        let paragraph = Paragraph::new(lines)
+            .alignment(Alignment::Left)
+            .wrap(Wrap { trim: true });
+        
+        f.render_widget(paragraph, inner_area);
+    } else {
+        let text = "No model prediction captured yet.\n\nPredictions will appear after your model runs inference.";
+        let paragraph = Paragraph::new(text)
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Gray));
+        
+        f.render_widget(paragraph, inner_area);
+    }
+}
+
 fn render_layout(f: &mut Frame, app: &App) {
+    if app.show_model_output {
+        let output_area = f.area();
+        render_model_output(f, app, output_area);
+        return;
+    }
     let terminal_size = f.area();
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -1857,6 +1860,7 @@ fn render_layout(f: &mut Frame, app: &App) {
     // Training log and system metrics
     render_training_progress(f, app, right_chunks[0]);
     render_system_metrics(f, app, right_chunks[1]);
+
 }
 
 fn run_app(python: PythonRunner) -> Result<()> {
@@ -2004,7 +2008,6 @@ fn run_app(python: PythonRunner) -> Result<()> {
                                 }
                             }
                         },
-                        // Add other keyboard event handling...
                         _ => {
                             if app.handle_key(key.code) {
                                 break;
@@ -2027,7 +2030,7 @@ fn run_app(python: PythonRunner) -> Result<()> {
 
     // Cleanup
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
 
     Ok(())
@@ -2041,16 +2044,20 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     if cli.debug {
-        env_logger::Builder::new()
-            .filter_level(log::LevelFilter::Debug)
-            .format_timestamp(None)
-            .format_target(false)
-            .init();
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Debug)
+        .format_timestamp(None)
+        .format_target(false)
+        .init();
     } else {
+        let log_file = std::fs::File::create("/tmp/aliyah_rust.log").unwrap_or_else(|_| {
+            std::fs::File::create("/dev/null").unwrap()
+        });
         env_logger::Builder::new()
             .filter_level(log::LevelFilter::Error)
             .format_timestamp(None)
             .format_target(false)
+            .target(env_logger::Target::Pipe(Box::new(log_file)))
             .init();
     }
 

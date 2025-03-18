@@ -4,7 +4,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 import numpy as np
-from aliyah import trainingmonitor
+from aliyah import monitor, trainingmonitor
 
 class SimpleNet(nn.Module):
     def __init__(self):
@@ -17,7 +17,7 @@ class SimpleNet(nn.Module):
         self.fc3 = nn.Linear(64, 10)
         
         # Track layers for visualization
-        self.layers = [self.fc1, self.fc2, self.fc3]
+        self.layers = [self.fc1, self.relu1, self.fc2, self.relu2, self.fc3]
         
         # Register hooks for visualization
         self.activation_values = {}
@@ -117,8 +117,30 @@ def main():
             avg_accuracy = epoch_accuracy / batch_count
             monitor.log_epoch(epoch, avg_loss, avg_accuracy)
 
+            # Log prediction here, using a sample from the dataset
+            sample_data, sample_target = next(iter(train_loader))
+            sample_data = sample_data.to(device)
+            with torch.no_grad():  # Disable gradient calculation for prediction
+                model.eval()  # Set the model to evaluation mode
+                output = model(sample_data)
+                probabilities = torch.nn.functional.softmax(
+                    output, dim=1
+                )  # Convert to probabilities
+
+                # Log prediction for the first image in the batch
+                true_digit = sample_target[0].item()  # Get the true label for first image
+                description = f"True digit is {true_digit}"  # Create description
+                prob_values = probabilities[0].cpu().numpy().tolist()  # Get probabilities for first image
+                labels = [str(i) for i in range(10)]  # Digit labels
+
+                monitor.log_prediction(
+                    prob_values,  # List of probabilities
+                    labels=labels,  # Digit labels
+                    description=description,  # Description
+                )
+
             if not monitor.check_control():
                 break
-
+   
 if __name__ == "__main__":
     main()

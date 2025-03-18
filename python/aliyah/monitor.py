@@ -159,6 +159,19 @@ class TrainingMonitor:
             "active": active
         })
 
+    def log_prediction(self, values, labels=None, description=None):
+        """Send model prediction for output"""
+        data = {
+                "values": [float(v) for v in values]
+                }
+        if labels is not None: 
+            data["labels"] = [str(label) for label in labels]
+        
+        if description is not None: 
+            data["description"] = str(description)
+
+        self.send_update("prediction", data)
+
     def log_layer_state(self, layer_idx: int, activations: List[float]):
         """Send entire layer's activation state"""
 

@@ -27,7 +27,9 @@ h     : Show this help
 
 tab/n : Show node information 
 
-click : Switch training and node panel 
+click : Switch training and node panel
+
+o     : Output panel 
 
 ---
 
@@ -49,13 +51,24 @@ data folder is for example scripts only
 
 ## Current TODO 
 
-- [ ] Fix mouse input cature bug when you exit (if clicked)
-- [ ] Fix plotting 
-- [ ] Make visualization better 
-- [ ] Update examples 
+- [x] Fix mouse input cature bug when you exit (if clicked)
+- [ ] Fix help render bug 
+- [ ] Make plotting more robust
+- [ ] Make visualization better for networks 
+- [ ] Make classic machine learning visualizations (not just networks)
+- [ ] Update examples (Make more robust examples with the new features and remove the original test examples)
 - [ ] Test custom metrics (if its properly working now)
-
-
+- [ ] Make framework hooks for visualizations 
+    - [x] PyTorch 
+    - [ ] JAX 
+    - [ ] Keras
+    - [ ] TF 
+    - [ ] TinyGrad
+    - [ ] SciKit Learn 
+    - [ ] Custom 
+    - [ ] Default 
+- [ ] User Config 
+- [ ] Publish Packages for pip, uv, and cargo 
 
 ---
 
@@ -95,21 +108,23 @@ Roadmap to 1.0 alpha
 - [x] Simple network visualization
 - [x] Resource monitoring
   - [ ] Basic GPU stats
+    - [ ] Test Metal 
+    - [ ] Test NVIDIA 
+    - [ ] Test AMD 
   - [x] Memory usage
   - [x] CPU usage
 
 ## 5. Testing and Validation
-- [ ] Basic integration tests
+- [x] Basic integration tests
 - [ ] Cross-platform testing
-- [ ] Performance benchmarks
 - [x] Error recovery testing
 - [x] Example scripts
 
 ## 6. Documentation
-- [ ] Usage guide
+- [x] Usage guide
 - [ ] Example implementations
-- [ ] Installation instructions
-- [ ] Clean up codebase (again)
+- [x] Installation instructions
+- [x] Clean up codebase (again)
 
 ## Future Features (Post 1.0a)
 - User configuration 
