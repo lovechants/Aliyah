@@ -80,7 +80,7 @@ fn detect_framework(content: &str) -> MLFramework {
     } else if content.contains("import jax") || content.contains("from jax") {
         debug!("JAX imports found");
         MLFramework::JAX
-    } else if content.contains("import keras") || content.contains("from keras") {
+    } else if content.contains("import keras") || content.contains("from keras") || content.contains("tensorflow.keras"){
         debug!("Keras imports found");
         MLFramework::Keras
     } else {

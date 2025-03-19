@@ -304,6 +304,9 @@ impl NetworkLayout {
 
     fn find_connection(&mut self, from_layer: usize, from_idx: usize,
                       to_layer: usize, to_idx: usize) -> Option<&mut NetworkConnection> {
+        if self.nodes.is_empty() {
+            return None;
+        }
         let from_node = self.nodes.iter()
             .find(|n| n.layer_index == from_layer && n.original_index == from_idx)?;
         let to_node = self.nodes.iter()
@@ -581,12 +584,18 @@ impl NetworkLayout {
     }
 
     pub fn update_activation(&mut self, layer: usize, node: usize, activation: f64) {
+        if self.nodes.is_empty() {
+            return;
+        }
         let idx = self.get_node_index((layer, node));
         if let Some(node) = self.nodes.get_mut(idx) {
             node.activation = Some(activation);
         }
     }
     pub fn update_connection(&mut self, from: (usize, usize), to: (usize, usize), weight: f64, active: bool) {
+        if self.nodes.is_empty() {
+            return;
+        }
         // First find both nodes safely
         let from_node_id = match self.nodes.iter()
             .find(|n| n.layer_index == from.0 && n.original_index == from.1)
@@ -697,6 +706,11 @@ impl App {
         // Convert terminal coordinates to canvas coordinates
         let x = (col as f64 / term_width as f64) * 2.0 - 1.0;
         let y = (row as f64 / term_height as f64) * 2.0 - 1.0;
+
+        if self.network.nodes.is_empty() {
+            self.selected_node = None;
+            return;
+        }
         
         // Find if we're clicking on a node
         for (idx, node) in self.network.nodes.iter().enumerate() {
@@ -716,7 +730,6 @@ impl App {
         self.selected_node = None;
         
         // Check if clicking in other UI areas and react accordingly
-        // (You would need to define regions for different panels)
     }
 
     fn update_network_layout(&mut self, architecture: &ModelArchitecture) {
@@ -752,11 +765,13 @@ impl App {
                         data.get("node").and_then(|v| v.as_u64()),
                         data.get("value").and_then(|v| v.as_f64())
                     ) {
-                        self.network.update_activation(
-                            layer as usize,
-                            node as usize,
-                            value
-                        );
+                        if !self.network.nodes.is_empty() {
+                            self.network.update_activation(
+                                layer as usize,
+                                node as usize,
+                                value
+                            );
+                        }
                     }
                 }
             },
@@ -766,15 +781,17 @@ impl App {
                     if let Some(from) = data.get("from").and_then(|v| v.as_object()) {
                         if let Some(to) = data.get("to").and_then(|v| v.as_object()) {
                             if let Some(active) = data.get("active").and_then(|v| v.as_bool()) {
-                                let from_pos = (
-                                    from.get("layer").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
-                                    from.get("node").and_then(|v| v.as_u64()).unwrap_or(0) as usize
-                                );
-                                let to_pos = (
-                                    to.get("layer").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
-                                    to.get("node").and_then(|v| v.as_u64()).unwrap_or(0) as usize
-                                );
-                                self.network.update_connection(from_pos, to_pos, 1.0, active);
+                                if !self.network.nodes.is_empty() {
+                                    let from_pos = (
+                                        from.get("layer").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                                        from.get("node").and_then(|v| v.as_u64()).unwrap_or(0) as usize
+                                    );
+                                    let to_pos = (
+                                        to.get("layer").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                                        to.get("node").and_then(|v| v.as_u64()).unwrap_or(0) as usize
+                                    );
+                                    self.network.update_connection(from_pos, to_pos, 1.0, active);
+                                }
                             }
                         }
                     }
@@ -786,7 +803,7 @@ impl App {
                     if let Some(layer_idx) = data.get("layer").and_then(|v| v.as_u64()) {
                         if let Some(activations) = data.get("activations").and_then(|v| v.as_array()) {
                             // Rate limit visualization updates
-                            if self.last_viz_update.elapsed() > Duration::from_millis(100) {
+                            if self.last_viz_update.elapsed() > Duration::from_millis(100) && !self.network.nodes.is_empty() {
                                 for (node_idx, val) in activations.iter().enumerate() {
                                     if let Some(value) = val.as_f64() {
                                         self.network.update_activation(
@@ -1323,6 +1340,15 @@ fn render_node_info(f: &mut Frame, app: &App, area: Rect) {
         
     let inner_area = node_block.inner(area);
     f.render_widget(node_block, area);
+
+    if app.network.nodes.is_empty() || app.selected_node.is_none() {
+        let text = "No node selected\nUse tab key to select nodes";
+        let paragraph = Paragraph::new(text)
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Gray));
+        f.render_widget(paragraph, inner_area);
+        return;
+    }
     
     if let Some(node_idx) = app.selected_node {
         if node_idx < app.network.nodes.len() {
