@@ -7,6 +7,13 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 import zmq
 
+""" TODO 
+
+Add proper arguments and context mangaing to library functions 
+
+"""
+
+
 def log_debug(msg):
     with open('/tmp/aliyah_python.log', 'a') as f:
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]

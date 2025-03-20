@@ -5,7 +5,7 @@ __version__ = "0.1.0"
 @contextmanager 
 def trainingmonitor():
     """
-    Context manager for monitoring ML trainign 
+    Wrapper for hooks and for monitoring ML training 
     """
     print("__ALIYAH_MONITOR_START__")
     try:
