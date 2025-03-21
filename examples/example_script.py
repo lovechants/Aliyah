@@ -129,17 +129,8 @@ def loss_function(recon_x, x, mu, logvar):
     # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
-    return BCE + KLD
-def loss_value(recon_x, x, mu, logvar):
-    BCE = F.binary_cross_entropy(recon_x, x.view(-1, 784), reduction="sum")
-
-    # see Appendix B from VAE paper:
-    # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
-    # https://arxiv.org/abs/1312.6114
-    # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-
     return BCE , KLD
+
 
 def train(epoch):
     model.train()
@@ -152,8 +143,8 @@ def train(epoch):
         target = target.to(device)  # Add this line to move target to device
         optimizer.zero_grad()
         recon_batch, mu, logvar = model(data)
-        loss = loss_function(recon_batch, data, mu, logvar)
-        BCE, KLD = loss_value(recon_batch, data, mu, logvar)
+        BCE, KLD = loss_function(recon_batch, data, mu, logvar)
+        loss = BCE + KLD
         per_example_bce = BCE / len(data)
         per_example_kld = KLD / len(data)
         per_example_total = loss.item() / len(data)
@@ -185,7 +176,8 @@ def test(epoch):
         for i, (data, _) in enumerate(test_loader):
             data = data.to(device)
             recon_batch, mu, logvar = model(data)
-            test_loss += loss_function(recon_batch, data, mu, logvar).item()
+            BCE, KLE = loss_function(recon_batch, data, mu, logvar)
+            test_loss += BCE + KLE
             if i == 0:
                 n = min(data.size(0), 8)
                 comparison = torch.cat(
