@@ -35,10 +35,7 @@ use clap::Parser;
 use aliyah::{ PythonRunner, MLFramework, ModelArchitecture};
 use aliyah::{ ScriptState, ScriptError };
 use aliyah::ScriptOutput;
-//use aliyah::IPCServer; 
 use aliyah::Update;
-//use aliyah::CommandServer;
-//use aliyah::UpdateServer;
 use aliyah::ZMQServer;
 use aliyah::Command;
 
@@ -114,11 +111,8 @@ struct App {
     error_scroll: usize,
     show_error_logs: bool,
     is_paused: bool, 
-    //ipc_server: Option<IPCServer>,
     training_scroll: usize,
     command_tx: Option<mpsc::Sender<String>>,
-    //command_server: Option<CommandServer>,
-    //update_server: Option<UpdateServer>,
     zmq_server: Option<ZMQServer>,
     start_time: Option<Instant>,
     total_epochs: Option<usize>,
@@ -130,6 +124,7 @@ struct App {
     show_model_output: bool,
     model_prediction: Option<ModelPrediction>,
     final_elapsed: Option<Duration>,
+    paused_elapsed: Option<Duration>,
 }
 
 #[derive(Debug, Clone)]
@@ -517,11 +512,8 @@ impl App {
             error_scroll: 0,
             show_error_logs: false,
             is_paused: false,
-            //ipc_server: None,
             training_scroll: 0,
             command_tx: None,
-            //command_server: None,
-            //update_server: None,
             zmq_server: None,
             start_time: None,
             total_epochs: None,
@@ -534,6 +526,7 @@ impl App {
             model_prediction: None,
             show_model_output: false,
             final_elapsed: None,
+            paused_elapsed: None,
         }
     }
     fn log_recieved_update(&self, update: &Update) {
@@ -1274,7 +1267,7 @@ fn render_node_info(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_metrics(f: &mut Frame, app: &App, area: Rect) {
+fn render_metrics(f: &mut Frame, app: &mut App, area: Rect) {
     let metrics_block = Block::default()
         .title("Training Status")
         .borders(Borders::ALL)
@@ -1376,7 +1369,14 @@ fn render_metrics(f: &mut Frame, app: &App, area: Rect) {
                     FINAL_TIME.unwrap_or(start_time.elapsed())
                 }
             },
-            _ => start_time.elapsed()
+            ScriptState::Paused => {
+                app.paused_elapsed.unwrap_or_else(|| start_time.elapsed()) 
+            }
+            _ => {
+                let current_elapsed = start_time.elapsed();
+                app.paused_elapsed = Some(current_elapsed);
+                current_elapsed
+            }
         };
         
         // Format with or without "(final)" tag
@@ -1628,15 +1628,32 @@ fn render_model_output(f: &mut Frame, app: &App, area: Rect) {
             Span::styled(format!("Epoch {}", prediction.epoch), 
                 Style::default().fg(Color::Cyan))
         ]));
-        
+
+        let time_display = match app.script_state { //TODO Seperate these based on match case 
+            ScriptState::Paused | ScriptState::Stopped | ScriptState::Error(_) => {
+                "Stopped".to_string()
+            }
+            ScriptState::Completed => { // TODO Format this Time Completed: {time}
+                "Completed".to_string()
+            }
+            _ => {
+                // If running, calculate the time difference
+                let time = Instant::now()
+                    .duration_since(prediction.timestamp)
+                    .as_secs_f32();
+                format!("{:.1}s ago", time)
+            }
+
+        };
+
         lines.push(Line::from(vec![
             Span::raw("Time: "),
             Span::styled(
-                format!("{:.1}s ago", 
-                    Instant::now().duration_since(prediction.timestamp).as_secs_f32()),
-                Style::default().fg(Color::Gray)
-            )
+                time_display,
+                Style::default().fg(Color::Gray),
+            ),
         ]));
+ 
         
         lines.push(Line::from(""));
         
@@ -1741,7 +1758,7 @@ fn render_model_output(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_layout(f: &mut Frame, app: &App) {
+fn render_layout(f: &mut Frame, app: &mut App) {
     if app.show_model_output {
         let output_area = f.area();
         render_model_output(f, app, output_area);
@@ -1966,7 +1983,7 @@ fn run_app(python: PythonRunner) -> Result<()> {
 
         // Render frame at 60 FPS
         if last_render.elapsed() >= render_interval {
-            terminal.draw(|f| render_layout(f, &app))?;
+            terminal.draw(|f| render_layout(f, &mut app))?;
             last_render = Instant::now();
         } else {
             thread::sleep(Duration::from_millis(1));

@@ -52,13 +52,24 @@ data folder is for example scripts only
 ## Current TODO 
 
 - [x] Fix mouse input cature bug when you exit (if clicked)
-- [ ] Fix help render bug
-- [ ] Fix prediction timer bug 
+- [x] Fix help render bug
+- [x] Fix prediction timer bug
+- [ ] Fix logging crash 
+- [ ] Fix prediction screen text
 - [x] Make plotting more robust
 - [ ] Make visualization better for networks 
 - [ ] Make classic machine learning visualizations (not just networks)
 - [ ] Update examples (Make more robust examples with the new features and remove the original test examples)
-- [x] Test custom metrics 
+    - [x] MNIST neural net 
+    - [x] MNIST VAE 
+    - [ ] Deep network 
+    - [ ] Shallow network 
+    - [ ] Transformer 
+    - [ ] Algorithmic Pipeline -> PSO -> PNN (no boltzmann) [adapted from this paper](https://ieeexplore.ieee.org/document/6525976)
+        - Either show each algorithm / model indepent of each other move to the next 
+        - Or show all of them at the same time running async?
+- [x] Test custom metrics
+- [ ] Fix output match statements to be more robust 
 - [ ] Make framework hooks for visualizations 
     - [x] PyTorch 
     - [ ] JAX 
@@ -70,7 +81,11 @@ data folder is for example scripts only
     - [ ] Default 
 - [ ] User Config 
 - [ ] Publish Packages for pip, uv, and cargo 
-
+- [ ] Add other GPU monitoring 
+    - [ ] Test Metal 
+    - [ ] Test NVIDIA 
+    - [ ] Test AMD 
+- [ ] Fix memory bug || check if its just local browser issues 
 ---
 
 Roadmap to 1.0 alpha 
@@ -109,9 +124,6 @@ Roadmap to 1.0 alpha
 - [x] Simple network visualization
 - [x] Resource monitoring
   - [ ] Basic GPU stats
-    - [ ] Test Metal 
-    - [ ] Test NVIDIA 
-    - [ ] Test AMD 
   - [x] Memory usage
   - [x] CPU usage
 
