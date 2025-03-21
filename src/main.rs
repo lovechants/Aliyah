@@ -87,8 +87,7 @@ struct GpuInfo {
 #[derive(Debug, Clone)]
 struct TrainingMetrics {
     epoch: usize,
-    loss: f64,
-    accuracy: f64,
+    metrics: HashMap<String, f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -315,125 +314,6 @@ impl NetworkLayout {
         self.connections.iter_mut()
             .find(|c| c.from_node_id == from_node.id && c.to_node_id == to_node.id)
     }
-    /*
-    pub fn draw<'a>(&'a self) -> Canvas<'a, impl Fn(&mut ratatui::widgets::canvas::Context<'_>) + 'a> {
-        Canvas::default()
-            .paint(|ctx| {
-                // Draw connections showing information flow
-                for conn in &self.connections {
-                    let from = &self.nodes.iter().find(|n| n.id == conn.from_node_id).unwrap();
-                    let to = &self.nodes.iter().find(|n| n.id == conn.to_node_id).unwrap();
-
-                    // Draw base connection
-                    let base_color = if conn.active {
-                        Color::Rgb(100, 100, 255)
-                    } else {
-                        Color::DarkGray
-                    };
-
-                    ctx.draw(&CanvasLine {
-                        x1: from.x,
-                        y1: from.y,
-                        x2: to.x,
-                        y2: to.y,
-                        color: base_color,
-                    });
-
-                    // Show forward signal propagation
-                    if let Some(signal) = conn.signal_strength {
-                        if signal > 0.1 {
-                            // Calculate position along connection
-                            let t = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis() as f64 / 500.0;
-                            let phase = t % 1.0;
-                            
-                            let x = from.x + (to.x - from.x) * phase;
-                            let y = from.y + (to.y - from.y) * phase;
-                            
-                            let intensity = (signal * 255.0) as u8;
-                            ctx.draw(&Points {
-                                coords: &[(x, y)],
-                                color: Color::Rgb(intensity, intensity, 0),
-                            });
-                        }
-                    }
-
-                    // Show backward gradient flow
-                    if let Some(gradient) = conn.gradient {
-                        if gradient.abs() > 0.1 {
-                            let t = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis() as f64 / 500.0;
-                            let phase = t % 1.0;
-                            
-                            let x = to.x + (from.x - to.x) * phase;
-                            let y = to.y + (from.y - to.y) * phase;
-                            
-                            let intensity = (gradient.abs() * 255.0) as u8;
-                            ctx.draw(&Points {
-                                coords: &[(x, y)],
-                                color: Color::Rgb(intensity, 0, 0),  // Red for backprop
-                            });
-                        }
-                    }
-                }
-
-                // Draw nodes with activation states
-                for node in &self.nodes {
-                    let radius = match node.node_type {
-                        NodeType::Input | NodeType::Output => 0.06,
-                        NodeType::Hidden => 0.05,
-                    };
-
-                    let points = self.generate_circle_points(node.x, node.y, radius, 16);
-                    
-                    // Node color based on type and activation
-                    let color = match node.node_type {
-                        NodeType::Input => {
-                            if let Some(act) = node.activation {
-                                if act > 0.1 {
-                                    Color::Rgb(100, 149, 237)  // Bright blue
-                                } else {
-                                    Color::DarkGray
-                                }
-                            } else {
-                                Color::DarkGray
-                            }
-                        },
-                        NodeType::Hidden => {
-                            if let Some(act) = node.activation {
-                                let intensity = (act * 255.0) as u8;
-                                Color::Rgb(intensity, intensity, intensity)
-                            } else {
-                                Color::DarkGray
-                            }
-                        },
-                        NodeType::Output => {
-                            if let Some(act) = node.activation {
-                                if act > 0.1 {
-                                    Color::Rgb(144, 238, 144)  // Bright green
-                                } else {
-                                    Color::DarkGray
-                                }
-                            } else {
-                                Color::DarkGray
-                            }
-                        }
-                    };
-
-                    ctx.draw(&Points {
-                        coords: &points,
-                        color,
-                    });
-                }
-            })
-            .x_bounds([self.bounds.0, self.bounds.2])
-            .y_bounds([self.bounds.1, self.bounds.3])
-    }
-    */ 
 
     pub fn draw<'a>(&'a self) -> Canvas<'a, impl Fn(&mut ratatui::widgets::canvas::Context<'_>) + 'a> {
         Canvas::default()
@@ -849,26 +729,24 @@ impl App {
                             }
                         }
                         if let Some(metrics) = data.get("metrics").and_then(|v| v.as_object()) {
-                            // Update batch number if available
-                            if let Some(batch) = data.get("batch").and_then(|v| v.as_u64()) {
-                                self.current_batch = Some(batch as usize);
-                            }
-                            
-                            // Periodically add to metrics history (not every batch to avoid too many points)
-                            if self.current_batch.unwrap_or(0) % 10 == 0 {
-                                if let (Some(loss), Some(accuracy)) = (
-                                    metrics.get("loss").and_then(|v| v.as_f64()),
-                                    metrics.get("accuracy").and_then(|v| v.as_f64())
-                                ) {
-                                    // Add to metrics history
-                                    self.metrics_history.push(TrainingMetrics {
-                                        epoch: self.current_epoch.unwrap_or(0),
-                                        loss,
-                                        accuracy,
-                                    });
-                                }
-                            }
-                        }
+                           let mut metrics_map = HashMap::new();
+                           for (name, value) in metrics {
+                               if let Some(val) = value.as_f64() {
+                                   metrics_map.insert(name.clone(), val);
+                               }
+                           }
+                           if !metrics_map.is_empty() {
+                               self.metrics_history.push(TrainingMetrics {
+                                   epoch: self.current_epoch.unwrap_or(0),
+                                   metrics: metrics_map,
+                               });
+
+                               if self.metrics_history.len() > 1000 {
+                                   self.metrics_history.drain(0..500);
+                               }
+                           }
+                       }
+
                     }
                 }
             },
@@ -904,19 +782,22 @@ impl App {
                         self.output_lines.push(String::new());
                     }
                     if let Some(metrics) = data.get("metrics").and_then(|v| v.as_object()) {
-                        // Add new metrics history entry
-                        if let (Some(loss), Some(accuracy)) = (
-                            metrics.get("loss").and_then(|v| v.as_f64()),
-                            metrics.get("accuracy").and_then(|v| v.as_f64())
-                        ) {
-                            // Add to metrics history
-                            self.metrics_history.push(TrainingMetrics {
+                        let mut metrics_map = HashMap::new();
+                        
+                        for (name, value) in metrics {
+                            if let Some(val) = value.as_f64() {
+                                metrics_map.insert(name.clone(), val);
+                            }
+                        }
+
+                        if !metrics_map.is_empty() {
+                            self.metrics_history.push(TrainingMetrics{
                                 epoch: self.current_epoch.unwrap_or(0),
-                                loss,
-                                accuracy,
+                                metrics: metrics_map,
                             });
-                            
-                            log_to_file(&format!("Added metrics to history: loss={}, accuracy={}", loss, accuracy));
+                            if self.metrics_history.len() > 1000 {
+                                self.metrics_history.drain(0..500);
+                            }
                         }
                     }
                 }
@@ -1260,35 +1141,6 @@ fn render_system_metrics(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn parse_training_line(line: &str) -> Option<TrainingMetrics> {
-    // Example format: "Training epoch 0, Loss: 1.0000, Accuracy: 0%"
-    let parts: Vec<&str> = line.split(',').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-
-    let epoch = parts[0].split_whitespace()
-        .nth(2)?
-        .parse::<usize>().ok()?;
-    
-    let loss = parts[1].trim()
-        .strip_prefix("Loss: ")?
-        .parse::<f64>().ok()?;
-    
-    let accuracy = parts[2].trim()
-        .strip_prefix("Accuracy: ")?
-        .strip_suffix("%")?
-        .parse::<f64>().ok()?;
-
-    Some(TrainingMetrics {
-        epoch,
-        loss,
-        accuracy,
-    })
-}
-
-
-
 fn render_training_progress(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .title(if app.show_error_logs { 
@@ -1586,20 +1438,9 @@ fn render_metrics_chart(f: &mut Frame, app: &App, area: Rect) {
     let inner_area = chart_block.inner(area);
     f.render_widget(chart_block, area);
 
-    // Prepare data for the chart
-    let loss_data: Vec<(f64, f64)> = app.metrics_history.iter()
-        .enumerate()
-        .map(|(i, m)| (i as f64, m.loss))
-        .collect();
-        
-    let accuracy_data: Vec<(f64, f64)> = app.metrics_history.iter()
-        .enumerate()
-        .map(|(i, m)| (i as f64, m.accuracy))
-        .collect();
-    
     // Skip rendering if no data yet
-    if loss_data.is_empty() {
-        let text = "Waiting for training data...";
+    if app.metrics_history.is_empty() || app.current_metrics.is_empty() {
+        let text = "Waiting for training data";
         let paragraph = Paragraph::new(text)
             .alignment(Alignment::Center)
             .style(Style::default().fg(Color::Gray));
@@ -1607,30 +1448,104 @@ fn render_metrics_chart(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
     
-    // Find min/max for scaling
-    let max_loss = loss_data.iter().map(|(_, v)| *v).fold(0.0, f64::max);
-    let min_loss = loss_data.iter().map(|(_, v)| *v).fold(max_loss, f64::min);
+    // Get a list of all available metrics from current metrics
+    let available_metrics: Vec<String> = app.current_metrics.keys()
+        .cloned()
+        .collect();
     
-    let max_acc = accuracy_data.iter().map(|(_, v)| *v).fold(0.0, f64::max);
-    let max_points = loss_data.len() as f64;
+    // Limit to 5 metrics maximum to avoid cluttering the chart
+    let metrics_to_show = available_metrics.iter()
+        .take(5)
+        .cloned()
+        .collect::<Vec<String>>();
     
-    // Create datasets
-    let loss_dataset = Dataset::default()
-        .name("Loss")
-        .marker(Marker::Braille)
-        .graph_type(GraphType::Line)
-        .style(Style::default().fg(Color::Red))
-        .data(&loss_data);
+    if metrics_to_show.is_empty() {
+        let text = "No metrics available to plot";
+        let paragraph = Paragraph::new(text)
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Gray));
+        f.render_widget(paragraph, inner_area);
+        return;
+    }
+    
+    // Define a set of distinct colors for the metrics
+    let colors = [
+        Color::Red,
+        Color::Green,
+        Color::Yellow,
+        Color::Blue,
+        Color::Magenta,
+        Color::Cyan,
+    ];
+    
+    // Store all data outside the loop so it lives long enough
+    let mut all_data: Vec<(String, Vec<(f64, f64)>, Color)> = Vec::new();
+    let mut max_value: f64 = 0.0;
+    let mut min_value: f64 = f64::MAX;
+    let max_points = app.metrics_history.len() as f64;
+    
+    // Collect data for all metrics
+    for (idx, metric_name) in metrics_to_show.iter().enumerate() {
+        // Get color (cycle through colors if we have more metrics than colors)
+        let color = colors[idx % colors.len()];
         
-    let accuracy_dataset = Dataset::default()
-        .name("Accuracy")
-        .marker(Marker::Braille)
-        .graph_type(GraphType::Line)
-        .style(Style::default().fg(Color::Green))
-        .data(&accuracy_data);
+        // Extract data for this metric from history
+        let data: Vec<(f64, f64)> = app.metrics_history.iter()
+            .enumerate()
+            .filter_map(|(i, m)| {
+                m.metrics.get(metric_name).map(|&val| (i as f64, val))
+            })
+            .collect();
+        
+        // Skip empty datasets
+        if data.is_empty() {
+            continue;
+        }
+        
+        // Update min/max values for scaling
+        for &(_, value) in &data {
+            max_value = max_value.max(value);
+            min_value = min_value.min(value);
+        }
+        
+        // Store the data for later use
+        all_data.push((metric_name.clone(), data, color));
+    }
+    
+    
+    if all_data.is_empty() {
+        let text = "No plottable metrics history available";
+        let paragraph = Paragraph::new(text)
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Gray));
+        f.render_widget(paragraph, inner_area);
+        return;
+    }
+    
+    // Ensure min_value is not greater than max_value 
+    if min_value > max_value {
+        min_value = 0.0;
+    }
+    
+    // Add a small margin to the bounds
+    let bound_margin = (max_value - min_value) * 0.1;
+    let y_min = (min_value - bound_margin).max(0.0);  // Don't go below zero unless values are negative
+    let y_max = max_value + bound_margin;
+    
+    
+    let datasets: Vec<Dataset> = all_data.iter()
+        .map(|(name, data, color)| {
+            Dataset::default()
+                .name(name.as_str())
+                .marker(Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(Style::default().fg(*color))
+                .data(data)
+        })
+        .collect();
     
     // Render chart with proper scaling
-    let chart = Chart::new(vec![loss_dataset, accuracy_dataset])
+    let chart = Chart::new(datasets)
         .x_axis(Axis::default()
             .title("Steps")
             .style(Style::default().fg(Color::Gray))
@@ -1639,8 +1554,12 @@ fn render_metrics_chart(f: &mut Frame, app: &App, area: Rect) {
         .y_axis(Axis::default()
             .title("Value")
             .style(Style::default().fg(Color::Gray))
-            .bounds([min_loss.min(0.0), max_loss.max(max_acc).max(1.0)])
-            .labels(vec!["0".to_string(), format!("{:.2}", max_loss.max(max_acc))]));
+            .bounds([y_min, y_max])
+            .labels(vec![
+                format!("{:.2}", y_min),
+                format!("{:.2}", (y_min + y_max) / 2.0),
+                format!("{:.2}", y_max)
+            ]));
             
     f.render_widget(chart, inner_area);
 }

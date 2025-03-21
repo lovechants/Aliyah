@@ -52,12 +52,13 @@ data folder is for example scripts only
 ## Current TODO 
 
 - [x] Fix mouse input cature bug when you exit (if clicked)
-- [ ] Fix help render bug 
-- [ ] Make plotting more robust
+- [ ] Fix help render bug
+- [ ] Fix prediction timer bug 
+- [x] Make plotting more robust
 - [ ] Make visualization better for networks 
 - [ ] Make classic machine learning visualizations (not just networks)
 - [ ] Update examples (Make more robust examples with the new features and remove the original test examples)
-- [ ] Test custom metrics (if its properly working now)
+- [x] Test custom metrics 
 - [ ] Make framework hooks for visualizations 
     - [x] PyTorch 
     - [ ] JAX 

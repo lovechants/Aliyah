@@ -130,7 +130,16 @@ def loss_function(recon_x, x, mu, logvar):
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
     return BCE + KLD
+def loss_value(recon_x, x, mu, logvar):
+    BCE = F.binary_cross_entropy(recon_x, x.view(-1, 784), reduction="sum")
 
+    # see Appendix B from VAE paper:
+    # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
+    # https://arxiv.org/abs/1312.6114
+    # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
+    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+
+    return BCE , KLD
 
 def train(epoch):
     model.train()
@@ -144,16 +153,24 @@ def train(epoch):
         optimizer.zero_grad()
         recon_batch, mu, logvar = model(data)
         loss = loss_function(recon_batch, data, mu, logvar)
+        BCE, KLD = loss_value(recon_batch, data, mu, logvar)
+        per_example_bce = BCE / len(data)
+        per_example_kld = KLD / len(data)
+        per_example_total = loss.item() / len(data)
         loss.backward()
         train_loss += loss.item()
         optimizer.step()
         pred = recon_batch.argmax(dim=1, keepdim=True)
         accuracy = pred.eq(target.view_as(pred)).float().mean().item() * 100
-        monitor.log_batch(batch_idx, train_loss, accuracy)
+        monitor.log_batch(
+            batch_idx, 
+            bce_per_example=per_example_bce,
+            kld_per_example=per_example_kld,
+            total_per_example=per_example_total,
+        )
         if batch_idx % args.log_interval == 0:
             e_loss = loss.item() / len(data)
-            e_acc = 100.0 * batch_idx / len(train_loader)
-            monitor.log_epoch(epoch, e_loss, e_acc)
+            monitor.log_epoch(epoch, e_loss)
             for idx, (name, activations) in enumerate(model.activation_values.items()):
                     # Get post-activation values and normalize
                     act_mean = activations.abs().mean(dim=0).detach().cpu().numpy()

@@ -114,37 +114,67 @@ class TrainingMonitor:
         except Exception as e:
             log_debug(f"Error handling command: {e}")
 
-    def log_batch(self, batch_idx: int, loss: float, accuracy: float, **extra_metrics):
+    def log_batch(self, batch_idx: int, loss=None, accuracy=None, **extra_metrics):
         """Send batch metrics"""
-
         current_time = time.time()
         if current_time - self._last_batch_update < 0.1:
             return 
 
-        if isinstance(loss, dict):
-            metrics = loss
-        else:
-            metrics = {
-                    "loss": float(loss),
-                    "accuracy": float(accuracy),
-            }
-            for key, value in extra_metrics.items():
-                metrics[key] = float(value) if isinstance(value, (int, float)) else value 
-        self.send_update("batch",{
+        metrics = {}
+        if loss is not None:
+            if isinstance(loss, dict):
+                metrics = loss
+            else:
+                metrics["loss"] = self._convert_tensor(loss)
+        
+        if accuracy is not None:
+            metrics["accuracy"] = self._convert_tensor(accuracy)
+            
+        # Add any extra metrics
+        for key, value in extra_metrics.items():
+            metrics[key] = self._convert_tensor(value)
+        
+        self.send_update("batch", {
             "batch": batch_idx,
             "metrics": metrics,
         })
         self._last_batch_update = current_time
+
+    def _convert_tensor(self, value):
+        if hasattr(value, 'item'):
+            return float(value.item())
+        elif isinstance(value, (int, float)):
+            return float(value)
+        return str(value)
         
 
-    def log_epoch(self, epoch: int, loss: float, accuracy: float, **extra_metrics):
+    def log_epoch(self, epoch: int, loss=None, accuracy=None, **extra_metrics):
         """Send epoch metrics"""
-        metrics = {
-            "loss": loss,
-            "accuracy": accuracy,
-            **extra_metrics  # Allow for additional metrics | Ok need to fix this output but it essentially works but not fully TODO fix this and output parsing but whatever 
-        }
+        metrics = {}
+        if loss is not None:
+            if isinstance(loss, dict):
+                metrics = loss
+            else:
+                metrics["loss"] = self._convert_tensor(loss)
         
+        if accuracy is not None:
+            metrics["accuracy"] = self._convert_tensor(accuracy)
+            
+        # Add any extra metrics
+        for key, value in extra_metrics.items():
+            metrics[key] = self._convert_tensor(value)
+        
+        self.send_update("batch", {
+            "epoch": epoch,
+            "metrics": metrics,
+        })
+
+    def _convert_tensor(self, value):
+        if hasattr(value, 'item'):
+            return float(value.item())
+        elif isinstance(value, (int, float)):
+            return float(value)
+        return str(value)
         self.send_update("epoch", {
             "epoch": epoch,
             "metrics": metrics
