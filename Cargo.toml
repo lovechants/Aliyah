@@ -6,6 +6,9 @@ description = "Terminal based machine learning training monitor"
 authors  = ["j <n50513186@gmail.com | j@07-i.co>"]
 repository = "https://github.com/lovechants/Aliyah"
 readme = "README.md"
+license = "MIT"
+keywords = ["machine-learning", "visualization", "monitoring", "terminal", "TUI"]
+categories = ["visualization", "science", "development-tools::debugging"]
 
 [profile.release]
 lto = true
@@ -14,8 +17,8 @@ panic = "abort"
 strip = true
 opt-level = 3
 
-[build]
-rustflags = ["-A", "warnings"]
+# [build]
+# rustflags = ["-A", "warnings"]
 
 [dependencies]
 anyhow = "1.0.95"
