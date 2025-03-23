@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary-name: aliyah
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            binary-name: aliyah
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary-name: aliyah.exe
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        target: ${{ matrix.target }}
+        override: true
+    
+    - name: Build Release Binary
+      uses: actions-rs/cargo@v1
+      with:
+        command: build
+        args: --release --target ${{ matrix.target }}
+    
+    - name: Package Binary
+      shell: bash
+      run: |
+        cp target/${{ matrix.target }}/release/${{ matrix.binary-name }} .
+        
+        # Special handling for macOS to include dylib dependencies
+        if [ "${{ matrix.os }}" = "macos-latest" ]; then
+          mkdir -p lib
+          # Try to copy required dylibs if they exist
+          [ -f /usr/lib/libc++.1.dylib ] && cp /usr/lib/libc++.1.dylib lib/ || true
+          [ -f /usr/lib/libc++abi.dylib ] && cp /usr/lib/libc++abi.dylib lib/ || true
+          
+          # Fix binary to use relative paths
+          install_name_tool -change /usr/lib/libc++.1.dylib @executable_path/../lib/libc++.1.dylib ${{ matrix.binary-name }} || true
+          
+          # Create archive with libs
+          tar czf aliyah-${{ matrix.target }}.tar.gz ${{ matrix.binary-name }} lib/
+        elif [ "${{ matrix.os }}" = "windows-latest" ]; then
+          7z a aliyah-${{ matrix.target }}.zip ${{ matrix.binary-name }}
+        else
+          tar czf aliyah-${{ matrix.target }}.tar.gz ${{ matrix.binary-name }}
+        fi
+    
+    - name: Upload Binary
+      uses: actions/upload-artifact@v3
+      with:
+        name: aliyah-${{ matrix.target }}
+        path: |
+          *.tar.gz
+          *.zip
+    
+  pypi:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+    
+    - name: Build and publish
+      env:
+        TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+        TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+      run: |
+        cd python
+        python -m build
+        twine upload dist/*
+  
+  create-release:
+    needs: [build, pypi]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Download Artifacts
+      uses: actions/download-artifact@v3
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          aliyah-*/aliyah-*.tar.gz
+          aliyah-*/aliyah-*.zip
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
