@@ -17,24 +17,24 @@ pip install aliyah
 
 ## Installation 
 
-Using package managers 
+#### Using package managers 
 ```bash 
 cargo install aliyah # Rust CLI  
 pip install aliyah # Python Hook Library  
 ```
 
-Using curl 
+#### Using curl 
 ```bash
 curl -sSL https://raw.githubusercontent.com/lovechants/Aliyah/main/install.sh | bash
 ```
 
-Using python 
+#### Using python 
 ```bash
 python -m pip install aliyah
 python -c "$(curl -sSL https://raw.githubusercontent.com/lovechants/Aliyah/main/install.py)"
 ```
 
-From source 
+#### From source 
 ```bash
 git clone https://github.com/lovechants/Aliyah.git
 cd Aliyah
@@ -70,7 +70,7 @@ with trainingmonitor() as monitor:
         monitor.log_epoch(epoch, val_loss, val_accuracy)
 ```
 
-Keyboard Controls
+#### Keyboard Controls
 
 q/ESC : Quit
 
@@ -92,9 +92,12 @@ click : Switch training and node panel
 
 o     : Output panel 
 
+---
 
-You can visualize and track more data depending on what you decide is best to send and monitor 
+You can visualize and track more data depending on what you decide is best to send and monitor
+
 Examples are provided that show in-depth metric tracking and visualization control in `/examples`
+
 Full documentation for each function is in the works, for now you can look at the source code in the `/python` directory to see what you can send 
 
 ---
@@ -104,11 +107,11 @@ Full documentation for each function is in the works, for now you can look at th
 #### Real time visualization 
 See real time visualization of your model architecture showing activations and connections between layers. Learn insights into each node and edge as the model learns. 
 
-#### Trainign Metrics 
+#### Training Metrics 
 Monitor key metrics in accordance to your model in real time with an interactive log and real time chart. Custom metrics can be sent between both using `**KWARG` in associated functions
 
 #### System Resource Monitoring 
-Keep track of CPU, GPU, and memory usage while the model trainings
+Keep track of CPU usage, GPU utilization, and memory usage while the model trains
 
 #### Interactive Control 
 Pause, resume, or stop training wthout killing the process, allowing you to have real time control as your model trains. 
@@ -121,10 +124,15 @@ Check how your model is performing wiht the prediction panel as your model train
 ## Framework Support 
 
 ✅ PyTorch
+
 🚧JAX
+
 🚧 TensorFlow/Keras
+
 🚧 Scikit-Learn
+
 🚧 TinyGrad
+
 
 Contributions and suggestions to framework hooks and behaviors are appreciated 
 Likewise, any framework that you'd like to see feel free to contribute or make an issue 
@@ -137,7 +145,7 @@ Checkout the examples for sample scripts and usage
 
 - `simpleNet.py` - A simple nerual network training on MNIST data, active visualizations and metric logging 
 - `example_vae.py` - An example autoencoder adapted from PyTorch, showing custom metrics and active visualizations as well as custom prediction panel 
-- `error_test.py` - Will show how the error log & are recorded in the TUI 
+- `error_test.py` - Will show how the error log & errors are recorded in the TUI 
 
 There are a variety of other scripts there for testing features feel free to look at them if using another framework outside of PyTorch 
 ###### Visualization hooks differ from framework to framework so as more get implemented better examples for each supported framework will be added 
