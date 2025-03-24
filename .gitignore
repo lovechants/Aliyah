@@ -159,8 +159,6 @@ support-check
 .png 
 /target
 /data
-/examples
 **/*.rs.bk
 Cargo.lock
 **/.DS_Store
-/python
