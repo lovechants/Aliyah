@@ -6,11 +6,11 @@ Work in progress
 
 Being able to see to see my model train and interact with it in the terminal is important to me 
 
-Wrapper libary in `/python`
+Wrapper/Hook libary in `/python`
 
 
 ```bash 
-pip install aliyah 
+aliyah <script.py> 
 ```
 
 ---
