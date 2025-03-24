@@ -9,6 +9,15 @@ readme = "README.md"
 license = "MIT"
 keywords = ["machine-learning", "visualization", "monitoring", "terminal", "TUI"]
 categories = ["visualization", "science", "development-tools::debugging"]
+exclude = [
+    "data/",
+    "examples/",
+    "python/",
+    "**/*.png",
+    "**/*.jpg",
+    "**/*.jpeg",
+    "example.png"
+]
 
 [profile.release]
 lto = true
@@ -35,7 +44,6 @@ env_logger = "0.11.6"
 regex = "1.11.1"
 chrono = "0.4.39"
 zmq = "0.10.0"
-
 
 [[bin]]
 name = "aliyah"
