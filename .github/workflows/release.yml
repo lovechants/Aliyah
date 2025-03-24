@@ -23,20 +23,15 @@ jobs:
             binary-name: aliyah.exe
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
-    - name: Install Rust
-      uses: actions-rs/toolchain@v1
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: stable
-        target: ${{ matrix.target }}
-        override: true
+        targets: ${{ matrix.target }}
     
     - name: Build Release Binary
-      uses: actions-rs/cargo@v1
-      with:
-        command: build
-        args: --release --target ${{ matrix.target }}
+      run: cargo build --release --target ${{ matrix.target }}
     
     - name: Package Binary
       shell: bash
@@ -62,20 +57,34 @@ jobs:
         fi
     
     - name: Upload Binary
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: aliyah-${{ matrix.target }}
         path: |
           *.tar.gz
           *.zip
+  
+  publish-crate:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/checkout@v4
     
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Publish to crates.io
+      run: |
+        cargo login ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        cargo publish --allow-dirty
+  
   pypi:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
     
@@ -83,6 +92,22 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install build twine
+    
+    - name: Fix Python setup.py
+      run: |
+        # Create a simple inline README if it doesn't exist
+        if [ ! -f "python/README.md" ]; then
+          echo "# Aliyah ML Training Monitor" > python/README.md
+          echo "" >> python/README.md
+          echo "Terminal based machine learning training monitor" >> python/README.md
+          echo "" >> python/README.md
+          echo "See the main repository at https://github.com/lovechants/Aliyah for more details." >> python/README.md
+        fi
+        
+        # Check if setup.py is referencing the wrong README path and fix it
+        if grep -q "../README.md" python/setup.py; then
+          sed -i 's|"../README.md"|"README.md"|g' python/setup.py
+        fi
     
     - name: Build and publish
       env:
@@ -94,21 +119,24 @@ jobs:
         twine upload dist/*
   
   create-release:
-    needs: [build, pypi]
+    needs: [build, pypi, publish-crate]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
     - name: Download Artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
+    
+    - name: List directories
+      run: ls -la
     
     - name: Create Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: |
           aliyah-*/aliyah-*.tar.gz
           aliyah-*/aliyah-*.zip
         draft: false
         prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
