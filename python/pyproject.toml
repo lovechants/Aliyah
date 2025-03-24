@@ -15,8 +15,9 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Topic :: Software Development :: Monitoring",
-]
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Libraries",
+    ]
 dependencies = [
     "pyzmq>=22.0.0",
 ]
