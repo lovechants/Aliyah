@@ -206,6 +206,40 @@ Happy to release verion 0.1.0a
 
 [Cargo / Crates.io](https://crates.io/crates/aliyah)
 
+---
+
+## Contributing to Aliyah
+
+Thank you for considering contributing to Aliyah! Here's how you can help.
+
+## Getting Started
+
+1. Fork the repository
+2. Clone your fork: `git clone https://github.com/your-username/Aliyah.git`
+3. Create a branch: `git checkout -b your-feature-branch`
+4. Make your changes
+5. Test your changes
+6. Commit your changes: `git commit -m "Add some feature"`
+7. Push to the branch: `git push origin your-feature-branch`
+8. Submit a pull request
+
+## Development Environment
+
+To set up your development environment:
+
+```bash
+# Clone the repository
+git clone https://github.com/your-username/Aliyah.git
+cd Aliyah
+
+# Build the Rust binary
+cargo build
+
+# Install the Python package in development mode
+pip install -e python/
+```
+
+---
 
 Roadmap to 1.0 alpha 
 
