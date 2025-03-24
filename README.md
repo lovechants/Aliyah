@@ -200,9 +200,13 @@ There are a variety of other scripts there for testing features feel free to loo
 
 ---
 
-Happy to release verion 0.1.0 
+Happy to release verion 0.1.0a 
+
 [PIP / PyPi](https://pypi.org/project/aliyah/0.1.0/)
-[Cargo / Crates.io] (https://crates.io/crates/aliyah)
+
+[Cargo / Crates.io](https://crates.io/crates/aliyah)
+
+
 Roadmap to 1.0 alpha 
 
 ## 1. Core Infrastructure
