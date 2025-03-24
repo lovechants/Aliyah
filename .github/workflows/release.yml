@@ -91,7 +91,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install build twine
+        pip install build
     
     - name: Fix Python setup.py
       run: |
@@ -108,15 +108,17 @@ jobs:
         if grep -q "../README.md" python/setup.py; then
           sed -i 's|"../README.md"|"README.md"|g' python/setup.py
         fi
-    
-    - name: Build and publish
-      env:
-        TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
-        TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+        
+    - name: Build Python package
       run: |
         cd python
         python -m build
-        twine upload dist/*
+    
+    - name: Build and publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: python/dist/
+        skip-existing: true
   
   create-release:
     needs: [build, pypi, publish-crate]
