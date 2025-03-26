@@ -168,6 +168,7 @@ There are a variety of other scripts there for testing features feel free to loo
 - [ ] Fix logging crash 
 - [ ] Fix prediction screen text
 - [x] Make plotting more robust
+- [ ] Fix windows error for logging since `\tmp` is unix only (forgot about this)
 - [ ] Make visualization better for networks 
 - [ ] Make classic machine learning visualizations (not just networks)
 - [ ] Update examples (Make more robust examples with the new features and remove the original test examples)
