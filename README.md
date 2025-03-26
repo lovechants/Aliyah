@@ -177,7 +177,7 @@ There are a variety of other scripts there for testing features feel free to loo
     - [ ] Deep network 
     - [ ] Shallow network 
     - [ ] Transformer 
-    - [ ] Algorithmic Pipeline -> PSO -> PNN (no boltzmann) [adapted from this paper](https://ieeexplore.ieee.org/document/6525976)
+    - [ ] Algorithmic Pipeline -> PSO -> PNN (no boltzmann) [adapted from this paper](https://ieeexplore.ieee.org/document/6525976) [my implmentation](https://codeberg.org/8cu/intrusion_detection)
         - Either show each algorithm / model indepent of each other move to the next 
         - Or show all of them at the same time running async?
 - [x] Test custom metrics
