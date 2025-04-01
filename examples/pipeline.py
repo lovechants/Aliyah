@@ -4,7 +4,15 @@ import torch
 import torch.nn as nn
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from torch.utils.data import Dataset, DataLoader
-import matplotlib.pyplot as plt
+from aliyah import monitor, trainingmonitor
+
+"""
+Original Paper: https://ieeexplore.ieee.org/abstract/document/8005871
+My Implementation: https://codeberg.org/8cu/intrusion_detection
+- Adapting this implementation to fit within the use case of aliyah 
+"""
+
+
 
 # 1. Deep Belief Network with RBM layers
 
@@ -199,22 +207,6 @@ def calculate_metrics(y_true, y_pred, print_results=True):
     
     return metrics
 
-def plot_metrics(metrics_history):
-    """Plot training metrics over time"""
-    plt.figure(figsize=(12, 6))
-    
-    metrics = ['accuracy', 'detection_rate', 'false_alarm_rate', 'precision']
-    for metric in metrics:
-        if metric in metrics_history:
-            plt.plot(metrics_history[metric], label=metric.replace('_', ' ').title())
-    
-    plt.xlabel('Epochs')
-    plt.ylabel('Score')
-    plt.title('Intrusion Detection Metrics Over Time')
-    plt.legend()
-    plt.grid(True)
-    plt.show()
-
 def train_intrusion_detection(train_df, test_df):
     print("Preprocessing data")
     scaler = StandardScaler()
@@ -300,9 +292,8 @@ def train_intrusion_detection(train_df, test_df):
 
 
 if __name__ == "__main__":
-    train_df = pd.read_csv('train_subset.csv')
-    test_df = pd.read_csv('test_subset.csv')
+    train_df = pd.read_csv('data/train_subset.csv')
+    test_df = pd.read_csv('data/test_subset.csv')
     
     dbn, pnn, accuracy = train_intrusion_detection(train_df, test_df)
-    #plot_metrics(accuracy)
 

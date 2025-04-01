@@ -181,7 +181,7 @@ There are a variety of other scripts there for testing features feel free to loo
         - Either show each algorithm / model indepent of each other move to the next 
         - Or show all of them at the same time running async?
 - [x] Test custom metrics
-- [ ] Fix output match statements to be more robust (On pause or stopped script states) 
+- [ ] Fix output window match statements to be more robust (On pause or stopped script states) 
 - [ ] Make framework hooks for visualizations 
     - [x] PyTorch 
     - [ ] JAX 
@@ -191,13 +191,14 @@ There are a variety of other scripts there for testing features feel free to loo
     - [ ] SciKit Learn 
     - [ ] Custom 
     - [ ] Default 
-- [ ] User Config 
-- [ ] Publish Packages for pip, uv, and cargo 
+- [ ] User Config (Themeing)
+- [ ] Save model weights, save plots and simple metrics as nice visual jpeg, 
+- [x] Publish Packages for pip, uv, and cargo 
 - [ ] Add other GPU monitoring 
     - [ ] Test Metal 
     - [ ] Test NVIDIA 
     - [ ] Test AMD 
-- [ ] Fix memory bug || check if its just local browser issues
+- [x] Fix memory bug || check if its just local browser issues (was local)
 
 ---
 
@@ -239,6 +240,8 @@ cargo build
 # Install the Python package in development mode
 pip install -e python/
 ```
+
+No strict code standards, just make sure your testing is thorough please.  
 
 ---
 
