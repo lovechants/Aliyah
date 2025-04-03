@@ -41,12 +41,14 @@ use aliyah::Command;
 
 
 fn log_to_file(msg: &str) {
-    if let Ok(mut file) = OpenOptions::new() 
+    let mut path = std::env::temp_dir();
+    path.push("aliyah_debug.log");
+    if let Ok(mut file) = OpenOptions::new()
         .create(true)
         .append(true)
-        .open("/tmp/aliyah_debug.log")
+        .open(&path)
     {
-        let now = chrono::Local::now(); 
+        let now = chrono::Local::now();
         let _ = writeln!(file, "[{}] {}", now.format("%Y-%m-%d %H:%M:%S.%3f"), msg);
     }
 }
@@ -89,11 +91,11 @@ struct TrainingMetrics {
 
 #[derive(Debug, Clone)]
 struct ModelPrediction {
-    epoch: usize, 
+    epoch: usize,
     timestamp: Instant,
     values: Vec<f64>,
     labels: Option<Vec<String>>,
-    description: String, // Provide context for the output will be dependent on user 
+    description: String, // Provide context for the output will be dependent on user
 }
 
 
@@ -110,7 +112,7 @@ struct App {
     error_log: Vec<String>,
     error_scroll: usize,
     show_error_logs: bool,
-    is_paused: bool, 
+    is_paused: bool,
     training_scroll: usize,
     command_tx: Option<mpsc::Sender<String>>,
     zmq_server: Option<ZMQServer>,
@@ -207,7 +209,7 @@ impl NetworkLayout {
         for (layer_idx, &size) in layer_sizes.iter().enumerate() {
             let x = -0.8 + (1.6 * layer_idx as f64 / (total_layers - 1) as f64);
             let scaled_size = scaled_sizes[layer_idx];
-            
+
             for node_idx in 0..scaled_size {
                 let y = if scaled_size > 1 {
                     -0.8 + (1.6 * node_idx as f64 / (scaled_size - 1) as f64)
@@ -274,7 +276,7 @@ impl NetworkLayout {
     }
 
     // Handle updates from training
-    pub fn update_forward_signal(&mut self, from_layer: usize, from_idx: usize, 
+    pub fn update_forward_signal(&mut self, from_layer: usize, from_idx: usize,
                                to_layer: usize, to_idx: usize, signal: f64) {
         if let Some(conn) = self.find_connection(from_layer, from_idx, to_layer, to_idx) {
             conn.signal_strength = Some(signal);
@@ -305,7 +307,7 @@ impl NetworkLayout {
             .find(|n| n.layer_index == from_layer && n.original_index == from_idx)?;
         let to_node = self.nodes.iter()
             .find(|n| n.layer_index == to_layer && n.original_index == to_idx)?;
-        
+
         self.connections.iter_mut()
             .find(|c| c.from_node_id == from_node.id && c.to_node_id == to_node.id)
     }
@@ -322,7 +324,7 @@ impl NetworkLayout {
                         // Determine line thickness and color based on weight and activity
                         let weight_abs = conn.weight.abs();
                         let weight_intensity = ((weight_abs * 200.0) as u8).min(255);
-                        
+
                         let color = if conn.active {
                             if conn.weight > 0.0 {
                                 Color::Rgb(0, weight_intensity, weight_intensity) // Positive weights in cyan
@@ -348,13 +350,13 @@ impl NetworkLayout {
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
                                 .as_millis() as f64 / 1000.0;
-                            
+
                             // Animate 3 particles along the connection
                             for i in 0..3 {
                                 let phase = ((t * 2.0) + (i as f64 * 0.33)) % 1.0;
                                 let x = from.x + (to.x - from.x) * phase;
                                 let y = from.y + (to.y - from.y) * phase;
-                                
+
                                 ctx.draw(&Points {
                                     coords: &[(x, y)],
                                     color: if conn.weight > 0.0 {
@@ -376,17 +378,17 @@ impl NetworkLayout {
                         NodeType::Hidden => 0.06,
                         NodeType::Output => 0.07,
                     };
-                    
+
                     // Scale radius slightly based on activation if available
                     let radius = if let Some(act) = node.activation {
                         base_radius * (1.0 + act.abs() * 0.5)
                     } else {
                         base_radius
                     };
-                    
+
                     // Generate points for circle
                     let points = self.generate_circle_points(node.x, node.y, radius, 16);
-                    
+
                     // Determine node color based on type and activation
                     let color = match node.node_type {
                         NodeType::Input => {
@@ -424,7 +426,7 @@ impl NetworkLayout {
                         coords: &points,
                         color,
                     });
-                    
+
                     // Draw outline for activated nodes
                     if let Some(act) = node.activation {
                         if act.abs() > 0.3 {
@@ -478,14 +480,14 @@ impl NetworkLayout {
                 Some(id) => id,
                 None => return, // Early return if from_node not found
         };
-        
+
         let to_node_id = match self.nodes.iter()
             .find(|n| n.layer_index == to.0 && n.original_index == to.1)
             .map(|n| n.id) {
                 Some(id) => id,
                 None => return, // Early return if to_node not found
         };
-        
+
         // Now find and update the connection
         if let Some(conn) = self.connections.iter_mut()
             .find(|c| c.from_node_id == from_node_id && c.to_node_id == to_node_id) {
@@ -550,7 +552,7 @@ impl App {
             labels,
             description,
         });
-        
+
         self.output_lines.push("Model prediction captured".to_string());
     }
 
@@ -559,9 +561,9 @@ impl App {
         // Convert terminal coordinates to canvas coordinates
         let x = (col as f64 / term_width as f64) * 2.0 - 1.0;
         let y = (row as f64 / term_height as f64) * 2.0 - 1.0;
-        
+
         self.hover_position = Some((x, y));
-        
+
         // Find if we're hovering over a node
         for (idx, node) in self.network.nodes.iter().enumerate() {
             let distance = ((node.x - x).powi(2) + (node.y - y).powi(2)).sqrt();
@@ -570,7 +572,7 @@ impl App {
                 return;
             }
         }
-        
+
         // Not hovering over any node
         self.selected_node = None;
     }
@@ -584,7 +586,7 @@ impl App {
             self.selected_node = None;
             return;
         }
-        
+
         // Find if we're clicking on a node
         for (idx, node) in self.network.nodes.iter().enumerate() {
             let distance = ((node.x - x).powi(2) + (node.y - y).powi(2)).sqrt();
@@ -598,10 +600,10 @@ impl App {
                 return;
             }
         }
-        
+
         // Clicking on empty space deselects
         self.selected_node = None;
-        
+
         // Check if clicking in other UI areas and react accordingly
     }
 
@@ -624,7 +626,7 @@ impl App {
     fn handle_zmq_update(&mut self, update: Update) {
         log_to_file(&format!("Received ZMQ Update: {:?}", update));
         self.log_recieved_update(&update);
-        
+
         // Initialize start time on first update if not set
         if self.start_time.is_none() {
             self.start_time = Some(Instant::now());
@@ -704,11 +706,11 @@ impl App {
                         // Process each metric
                         for (name, value) in metrics.iter() {
                             self.current_metrics.insert(name.clone(), value.clone());
-                            
+
                             // Format and add to output lines for display
-                            let display_line = format!("Batch {}: {}: {}", 
+                            let display_line = format!("Batch {}: {}: {}",
                                 self.current_batch.unwrap_or(0),
-                                name, 
+                                name,
                                 format_value(value)
                             );
                             self.output_lines.push(display_line);
@@ -776,7 +778,7 @@ impl App {
                     }
                     if let Some(metrics) = data.get("metrics").and_then(|v| v.as_object()) {
                         let mut metrics_map = HashMap::new();
-                        
+
                         for (name, value) in metrics {
                             if let Some(val) = value.as_f64() {
                                 metrics_map.insert(name.clone(), val);
@@ -825,7 +827,7 @@ impl App {
                         let values: Vec<f64> = values_array.iter()
                             .filter_map(|v| v.as_f64())
                             .collect();
-                        
+
                         // Extract optional labels
                         let labels = data.get("labels")
                             .and_then(|v| v.as_array())
@@ -834,13 +836,13 @@ impl App {
                                     .filter_map(|v| v.as_str().map(String::from))
                                     .collect::<Vec<String>>()
                             });
-                        
+
                         // Extract description if provided
                         let description = data.get("description")
                             .and_then(|v| v.as_str())
                             .unwrap_or("Model prediction")
                             .to_string();
-                        
+
                         self.set_model_prediction(values, labels, description);
                     }
                 }
@@ -940,14 +942,14 @@ impl App {
         }
     }
 
-    /* 
+    /*
      * I think these group of functions are very extendable but will need a code refactor later
      * down the line and optimization of the rust code base in general
      *
      * Since these functions point at the batch, epochs, and individual metrics these can probably
      * just be moved around other parts of the ui as needed since there is some redundency that
-     * needs to be cleaned up way later 
-     */ 
+     * needs to be cleaned up way later
+     */
     fn update_metric(&mut self, name: &str, value: serde_json::Value) {
         self.current_metrics.insert(name.to_string(), value.clone());
     }
@@ -989,7 +991,7 @@ impl App {
         if let ScriptState::Error(error) = &state {
             self.log_error(&error.to_string());
         }
-        if matches!(state, ScriptState::Completed | ScriptState::Stopped) && 
+        if matches!(state, ScriptState::Completed | ScriptState::Stopped) &&
                !matches!(self.script_state, ScriptState::Completed | ScriptState::Stopped) {
                 if let Some(start_time) = self.start_time {
                     self.final_elapsed = Some(start_time.elapsed());
@@ -1013,16 +1015,16 @@ impl App {
         if !layer_sizes.is_empty() {
             self.network = NetworkLayout::new(&layer_sizes);
         }
-        
+
         self.model_architecture = architecture;
     }
 
    fn update_system_metrics(&mut self) {
         self.sys.refresh_all();
-        
+
         // Calculate CPU usage across all cores
         let cpu_usage = self.sys.global_cpu_info().cpu_usage();
-        
+
         // Get memory information
         let memory_used = self.sys.used_memory();
         let memory_total = self.sys.total_memory();
@@ -1106,7 +1108,7 @@ fn render_system_metrics(f: &mut Frame, app: &App, area: Rect) {
 
     if let Some(metrics) = &app.system_metrics {
         let mem_percentage = (metrics.memory_used as f64 / metrics.memory_total as f64 * 100.0) as u64;
-        
+
         let mut text = format!(
             "\nCPU Usage: {:.1}%\n\
              Memory: {} / {} ({:.1}%)",
@@ -1136,10 +1138,10 @@ fn render_system_metrics(f: &mut Frame, app: &App, area: Rect) {
 
 fn render_training_progress(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
-        .title(if app.show_error_logs { 
-            "Error Log" 
-        } else { 
-            "Training Progress" 
+        .title(if app.show_error_logs {
+            "Error Log"
+        } else {
+            "Training Progress"
         })
         .title_style(Style::default().fg(match &app.script_state {
             ScriptState::Error(_) => Color::Red,
@@ -1182,7 +1184,7 @@ fn render_node_info(f: &mut Frame, app: &App, area: Rect) {
     let node_block = Block::default()
         .title("Node Information")
         .borders(Borders::ALL);
-        
+
     let inner_area = node_block.inner(area);
     f.render_widget(node_block, area);
 
@@ -1194,26 +1196,26 @@ fn render_node_info(f: &mut Frame, app: &App, area: Rect) {
         f.render_widget(paragraph, inner_area);
         return;
     }
-    
+
     if let Some(node_idx) = app.selected_node {
         if node_idx < app.network.nodes.len() {
             let node = &app.network.nodes[node_idx];
-            
+
             // Count input and output connections
             let input_conn_count = app.network.connections.iter()
                 .filter(|c| c.to_node_id == node.id)
                 .count();
-                
+
             let output_conn_count = app.network.connections.iter()
                 .filter(|c| c.from_node_id == node.id)
                 .count();
-            
+
             let node_type = match node.node_type {
                 NodeType::Input => "Input",
                 NodeType::Hidden => "Hidden",
                 NodeType::Output => "Output",
             };
-            
+
             let node_info = vec![
                 Line::from(vec![
                     Span::raw("Layer: "),
@@ -1246,14 +1248,14 @@ fn render_node_info(f: &mut Frame, app: &App, area: Rect) {
                 ]),
                 Line::from(vec![
                     Span::raw("Connections: "),
-                    Span::styled(format!("{} in, {} out", input_conn_count, output_conn_count), 
+                    Span::styled(format!("{} in, {} out", input_conn_count, output_conn_count),
                         Style::default().fg(Color::White))
                 ]),
             ];
-            
+
             let paragraph = Paragraph::new(node_info)
                 .alignment(Alignment::Left);
-                
+
             f.render_widget(paragraph, inner_area);
         }
     } else {
@@ -1262,7 +1264,7 @@ fn render_node_info(f: &mut Frame, app: &App, area: Rect) {
         let paragraph = Paragraph::new(text)
             .alignment(Alignment::Center)
             .style(Style::default().fg(Color::Gray));
-            
+
         f.render_widget(paragraph, inner_area);
     }
 }
@@ -1283,7 +1285,7 @@ fn render_metrics(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Build status section
     let mut text = Vec::new();
-    
+
     // Training status with color
     let status_text = match &app.script_state {
         ScriptState::Starting => Span::styled("Starting", Style::default().fg(Color::Blue)),
@@ -1322,7 +1324,7 @@ fn render_metrics(f: &mut Frame, app: &mut App, area: Rect) {
     // Add model summary
     text.push(Line::from(""));
     text.push(Line::from("Model Summary:"));
-    
+
     let total_params = app.model_architecture.total_parameters;
     let param_text = if total_params > 1_000_000 {
         format!("{:.2}M", total_params as f64 / 1_000_000.0)
@@ -1331,14 +1333,14 @@ fn render_metrics(f: &mut Frame, app: &mut App, area: Rect) {
     } else {
         format!("{}", total_params)
     };
-    
+
     let layer_count = app.model_architecture.layers.len();
-    
+
     text.push(Line::from(vec![
         Span::raw("Layers: "),
         Span::styled(format!("{}", layer_count), Style::default().fg(Color::White))
     ]));
-    
+
     text.push(Line::from(vec![
         Span::raw("Parameters: "),
         Span::styled(param_text, Style::default().fg(Color::White))
@@ -1357,11 +1359,11 @@ fn render_metrics(f: &mut Frame, app: &mut App, area: Rect) {
         ]));
     }
 
-    if let Some(start_time) = app.start_time { //TODO fix timer for paused state 
+    if let Some(start_time) = app.start_time { //TODO fix timer for paused state
         let elapsed = match app.script_state {
             ScriptState::Completed | ScriptState::Stopped => {
                 static mut FINAL_TIME: Option<Duration> = None;
-                
+
                 unsafe {
                     if FINAL_TIME.is_none() {
                         FINAL_TIME = Some(start_time.elapsed());
@@ -1370,7 +1372,7 @@ fn render_metrics(f: &mut Frame, app: &mut App, area: Rect) {
                 }
             },
             ScriptState::Paused => {
-                app.paused_elapsed.unwrap_or_else(|| start_time.elapsed()) 
+                app.paused_elapsed.unwrap_or_else(|| start_time.elapsed())
             }
             _ => {
                 let current_elapsed = start_time.elapsed();
@@ -1378,12 +1380,12 @@ fn render_metrics(f: &mut Frame, app: &mut App, area: Rect) {
                 current_elapsed
             }
         };
-        
+
         // Format with or without "(final)" tag
         let time_text = match app.script_state {
             ScriptState::Completed | ScriptState::Stopped => {
                 format!(
-                    "{:02}:{:02}:{:02} (final)", 
+                    "{:02}:{:02}:{:02} (final)",
                     elapsed.as_secs() / 3600,
                     (elapsed.as_secs() % 3600) / 60,
                     elapsed.as_secs() % 60
@@ -1391,20 +1393,20 @@ fn render_metrics(f: &mut Frame, app: &mut App, area: Rect) {
             },
             _ => {
                 format!(
-                    "{:02}:{:02}:{:02}", 
+                    "{:02}:{:02}:{:02}",
                     elapsed.as_secs() / 3600,
                     (elapsed.as_secs() % 3600) / 60,
                     elapsed.as_secs() % 60
                 )
             }
         };
-        
+
         text.push(Line::from(vec![
             Span::raw("Training Time: "),
             Span::styled(time_text, Style::default().fg(Color::White))
         ]));
     }
-        
+
 
 
     // Add current metrics
@@ -1412,11 +1414,11 @@ fn render_metrics(f: &mut Frame, app: &mut App, area: Rect) {
     text.push(Line::from(vec![
         Span::styled("Current Metrics:", Style::default().fg(Color::White))
     ]));
-    
+
     for (name, value) in &app.current_metrics {
         text.push(Line::from(vec![
             Span::raw(format!("{}: ", name)),
-            Span::styled(format_value(value), 
+            Span::styled(format_value(value),
                 Style::default().fg(if name == "loss" { Color::Red } else { Color::Green }))
         ]));
     }
@@ -1434,7 +1436,7 @@ fn render_metrics_chart(f: &mut Frame, app: &App, area: Rect) {
     let chart_block = Block::default()
         .title("Training Metrics")
         .borders(Borders::ALL);
-    
+
     let inner_area = chart_block.inner(area);
     f.render_widget(chart_block, area);
 
@@ -1447,18 +1449,18 @@ fn render_metrics_chart(f: &mut Frame, app: &App, area: Rect) {
         f.render_widget(paragraph, inner_area);
         return;
     }
-    
+
     // Get a list of all available metrics from current metrics
     let available_metrics: Vec<String> = app.current_metrics.keys()
         .cloned()
         .collect();
-    
+
     // Limit to 5 metrics maximum to avoid cluttering the chart
     let metrics_to_show = available_metrics.iter()
         .take(5)
         .cloned()
         .collect::<Vec<String>>();
-    
+
     if metrics_to_show.is_empty() {
         let text = "No metrics available to plot";
         let paragraph = Paragraph::new(text)
@@ -1467,7 +1469,7 @@ fn render_metrics_chart(f: &mut Frame, app: &App, area: Rect) {
         f.render_widget(paragraph, inner_area);
         return;
     }
-    
+
     // Define a set of distinct colors for the metrics
     let colors = [
         Color::Red,
@@ -1477,18 +1479,18 @@ fn render_metrics_chart(f: &mut Frame, app: &App, area: Rect) {
         Color::Magenta,
         Color::Cyan,
     ];
-    
+
     // Store all data outside the loop so it lives long enough
     let mut all_data: Vec<(String, Vec<(f64, f64)>, Color)> = Vec::new();
     let mut max_value: f64 = 0.0;
     let mut min_value: f64 = f64::MAX;
     let max_points = app.metrics_history.len() as f64;
-    
+
     // Collect data for all metrics
     for (idx, metric_name) in metrics_to_show.iter().enumerate() {
         // Get color (cycle through colors if we have more metrics than colors)
         let color = colors[idx % colors.len()];
-        
+
         // Extract data for this metric from history
         let data: Vec<(f64, f64)> = app.metrics_history.iter()
             .enumerate()
@@ -1496,23 +1498,23 @@ fn render_metrics_chart(f: &mut Frame, app: &App, area: Rect) {
                 m.metrics.get(metric_name).map(|&val| (i as f64, val))
             })
             .collect();
-        
+
         // Skip empty datasets
         if data.is_empty() {
             continue;
         }
-        
+
         // Update min/max values for scaling
         for &(_, value) in &data {
             max_value = max_value.max(value);
             min_value = min_value.min(value);
         }
-        
+
         // Store the data for later use
         all_data.push((metric_name.clone(), data, color));
     }
-    
-    
+
+
     if all_data.is_empty() {
         let text = "No plottable metrics history available";
         let paragraph = Paragraph::new(text)
@@ -1521,18 +1523,18 @@ fn render_metrics_chart(f: &mut Frame, app: &App, area: Rect) {
         f.render_widget(paragraph, inner_area);
         return;
     }
-    
-    // Ensure min_value is not greater than max_value 
+
+    // Ensure min_value is not greater than max_value
     if min_value > max_value {
         min_value = 0.0;
     }
-    
+
     // Add a small margin to the bounds
     let bound_margin = (max_value - min_value) * 0.1;
     let y_min = (min_value - bound_margin).max(0.0);  // Don't go below zero unless values are negative
     let y_max = max_value + bound_margin;
-    
-    
+
+
     let datasets: Vec<Dataset> = all_data.iter()
         .map(|(name, data, color)| {
             Dataset::default()
@@ -1543,7 +1545,7 @@ fn render_metrics_chart(f: &mut Frame, app: &App, area: Rect) {
                 .data(data)
         })
         .collect();
-    
+
     // Render chart with proper scaling
     let chart = Chart::new(datasets)
         .x_axis(Axis::default()
@@ -1560,7 +1562,7 @@ fn render_metrics_chart(f: &mut Frame, app: &App, area: Rect) {
                 format!("{:.2}", (y_min + y_max) / 2.0),
                 format!("{:.2}", y_max)
             ]));
-            
+
     f.render_widget(chart, inner_area);
 }
 
@@ -1568,13 +1570,13 @@ fn render_layer_info(f: &mut Frame, app: &App, area: Rect) {
     let layers_block = Block::default()
         .title("Network Layers")
         .borders(Borders::ALL);
-    
+
     let inner_area = layers_block.inner(area);
     f.render_widget(layers_block, area);
-    
+
     let mut layer_texts = Vec::new();
     let mut total_params = 0;
-    
+
     for (idx, layer) in app.model_architecture.layers.iter().enumerate() {
         let layer_stats = format!(
             "{}: {} ({})",
@@ -1585,12 +1587,12 @@ fn render_layer_info(f: &mut Frame, app: &App, area: Rect) {
         layer_texts.push(layer_stats);
         total_params += layer.parameters;
     }
-    
+
     layer_texts.push(format!("Total params: {}", format_params(total_params)));
-    
+
     let paragraph = Paragraph::new(layer_texts.join("\n"))
         .alignment(Alignment::Left);
-        
+
     f.render_widget(paragraph, inner_area);
 }
 
@@ -1609,27 +1611,27 @@ fn render_model_output(f: &mut Frame, app: &App, area: Rect) {
         .title("Model Prediction")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
-    
+
     let inner_area = output_block.inner(area);
     f.render_widget(output_block, area);
-    
+
     if let Some(prediction) = &app.model_prediction {
         let mut lines = Vec::new();
-        
+
         // Add header information with better styling
         lines.push(Line::from(vec![
             Span::styled(
-                prediction.description.clone(), 
+                prediction.description.clone(),
                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
             )
         ]));
-        
+
         lines.push(Line::from(vec![
-            Span::styled(format!("Epoch {}", prediction.epoch), 
+            Span::styled(format!("Epoch {}", prediction.epoch),
                 Style::default().fg(Color::Cyan))
         ]));
 
-        let time_display = match app.script_state { //TODO Seperate these based on match case 
+        let time_display = match app.script_state { //TODO Seperate these based on match case
             ScriptState::Paused | ScriptState::Stopped | ScriptState::Error(_) => {
                 "Stopped".to_string()
             }
@@ -1653,43 +1655,43 @@ fn render_model_output(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::Gray),
             ),
         ]));
- 
-        
+
+
         lines.push(Line::from(""));
-        
+
         // Get the highest probability for coloring
         let max_value = prediction.values.iter()
             .fold(0.0f64, |max, &val| max.max(val));
-        
+
         // Format values
         if let Some(labels) = &prediction.labels {
             // Create a prediction table
             lines.push(Line::from(vec![
-                Span::styled("Class Predictions:", 
+                Span::styled("Class Predictions:",
                     Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
             ]));
-            
+
             lines.push(Line::from(vec![
-                Span::styled("Class".to_string(), 
+                Span::styled("Class".to_string(),
                     Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" | "),
-                Span::styled("Probability".to_string(), 
+                Span::styled("Probability".to_string(),
                     Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" | "),
-                Span::styled("Bar".to_string(), 
+                Span::styled("Bar".to_string(),
                     Style::default().add_modifier(Modifier::BOLD)),
             ]));
-            
+
             lines.push(Line::from("-".repeat(inner_area.width as usize - 4)));
-            
+
             // Create sorted indices for displaying highest probabilities first
             let mut indices: Vec<usize> = (0..prediction.values.len()).collect();
             indices.sort_by(|&i, &j| prediction.values[j].partial_cmp(&prediction.values[i]).unwrap());
-            
+
             for &i in indices.iter().take(20) {
                 let value = prediction.values[i];
                 let label = &labels[i];
-                
+
                 // Determine color based on probability
                 let color = if value > 0.5 {
                     Color::Green
@@ -1698,11 +1700,11 @@ fn render_model_output(f: &mut Frame, app: &App, area: Rect) {
                 } else {
                     Color::Gray
                 };
-                
+
                 // Create a bar visualization
                 let bar_width = ((inner_area.width as f64 - 30.0) * value).round() as usize;
                 let bar = "█".repeat(bar_width);
-                
+
                 lines.push(Line::from(vec![
                     Span::styled(format!("{:<10}", label), Style::default().fg(color)),
                     Span::raw(" | "),
@@ -1714,46 +1716,46 @@ fn render_model_output(f: &mut Frame, app: &App, area: Rect) {
         } else {
             // Just show values if no labels
             lines.push(Line::from("Output Values:"));
-            
+
             for (i, value) in prediction.values.iter().enumerate().take(20) {
                 let bar_width = ((inner_area.width as f64 - 20.0) * (*value / max_value)).round() as usize;
                 let bar = "█".repeat(bar_width);
-                
+
                 lines.push(Line::from(vec![
                     Span::raw(format!("{:<3}: ", i)),
-                    Span::styled(format!("{:.4}", value), 
+                    Span::styled(format!("{:.4}", value),
                         Style::default().fg(Color::White)),
                     Span::raw(" "),
                     Span::styled(bar, Style::default().fg(Color::Cyan)),
                 ]));
             }
         }
-        
+
         // If there are more values than we're showing
         if prediction.values.len() > 20 {
             lines.push(Line::from(vec![
                 Span::raw(format!("... and {} more values", prediction.values.len() - 20))
             ]));
         }
-        
+
         // Add help text
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("Press 'o' to return to main view", 
+            Span::styled("Press 'o' to return to main view",
                 Style::default().fg(Color::Gray))
         ]));
-        
+
         let paragraph = Paragraph::new(lines)
             .alignment(Alignment::Left)
             .wrap(Wrap { trim: true });
-        
+
         f.render_widget(paragraph, inner_area);
     } else {
         let text = "No model prediction captured yet.\n\nPredictions will appear after your model runs inference.";
         let paragraph = Paragraph::new(text)
             .alignment(Alignment::Center)
             .style(Style::default().fg(Color::Gray));
-        
+
         f.render_widget(paragraph, inner_area);
     }
 }
@@ -1788,7 +1790,7 @@ fn render_layout(f: &mut Frame, app: &mut App) {
             Constraint::Percentage(50),  // Right - log/system metrics
         ])
         .split(main_chunks[1]);
-        
+
     let right_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -1807,10 +1809,10 @@ fn render_layout(f: &mut Frame, app: &mut App) {
         ),
         top_chunks[0]
     );
-    
+
     // Render layer info and metrics
     render_metrics(f, app, top_chunks[1]);
-    
+
     // If a node is selected, show details
     if app.selected_node.is_some() {
         render_node_info(f, app, bottom_chunks[0]);
@@ -1818,7 +1820,7 @@ fn render_layout(f: &mut Frame, app: &mut App) {
         // Show metrics plot when no node selected
         render_metrics_chart(f, app, bottom_chunks[0]);
     }
-    
+
     // Training log and system metrics
     render_training_progress(f, app, right_chunks[0]);
     render_system_metrics(f, app, right_chunks[1]);
@@ -1841,13 +1843,13 @@ fn run_app(python: PythonRunner) -> Result<()> {
 
     // Setup ZMQ channels
     let (mut zmq_server, update_rx, command_tx) = ZMQServer::new()?;
-    
+
     // Create a separate channel for updates
     let (update_tx, _update_rx) = mpsc::channel::<Update>();
-    
+
     // Start the metrics listener with the update channel
     zmq_server.start_listening(update_tx)?;
-    
+
     app.command_tx = Some(command_tx);
     app.zmq_server = Some(zmq_server);
 
@@ -1859,7 +1861,7 @@ fn run_app(python: PythonRunner) -> Result<()> {
 
     let mut last_metrics_update = Instant::now();
     let mut has_error = false;
-    
+
     loop {
         // Process all pending ZMQ updates
         while let Ok(update) = update_rx.try_recv() {
@@ -1957,13 +1959,13 @@ fn run_app(python: PythonRunner) -> Result<()> {
                                 if current_idx < app.network.nodes.len() {
                                     let current = &app.network.nodes[current_idx];
                                     let layer = current.layer_index;
-                                    
+
                                     // Find next node in same layer
                                     let next = app.network.nodes.iter().enumerate()
                                         .filter(|(_, n)| n.layer_index == layer && n.id > current.id)
                                         .map(|(i, _)| i)
                                         .next();
-                                        
+
                                     if let Some(next_idx) = next {
                                         app.selected_node = Some(next_idx);
                                     }
@@ -1997,23 +1999,30 @@ fn run_app(python: PythonRunner) -> Result<()> {
 
     Ok(())
 
-    
+
 }
 
 
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-
     if cli.debug {
-    env_logger::Builder::new()
-        .filter_level(log::LevelFilter::Debug)
-        .format_timestamp(None)
-        .format_target(false)
-        .init();
+        env_logger::Builder::new()
+            .filter_level(log::LevelFilter::Debug)
+            .format_timestamp(None)
+            .format_target(false)
+            .init();
     } else {
-        let log_file = std::fs::File::create("/tmp/aliyah_rust.log").unwrap_or_else(|_| {
-            std::fs::File::create("/dev/null").unwrap()
+        // Use std::env::temp_dir() for OS-agnostic temp directory
+        let mut log_path = std::env::temp_dir();
+        log_path.push("aliyah_rust.log");
+        let log_file = std::fs::File::create(log_path).unwrap_or_else(|_| {
+            // Handle null file in an OS-agnostic way
+            if cfg!(windows) {
+                std::fs::File::create("NUL").unwrap()
+            } else {
+                std::fs::File::create("/dev/null").unwrap()
+            }
         });
         env_logger::Builder::new()
             .filter_level(log::LevelFilter::Error)
@@ -2022,12 +2031,10 @@ fn main() -> Result<()> {
             .target(env_logger::Target::Pipe(Box::new(log_file)))
             .init();
     }
-
     let python = PythonRunner::new(cli.script, cli.script_args)?;
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let result = run_app(python);
-    
     result
 }
