@@ -41,12 +41,15 @@ use aliyah::Command;
 
 
 fn log_to_file(msg: &str) {
-    if let Ok(mut file) = OpenOptions::new() 
+    let mut path = std::env::temp_dir();
+    path.push("aliyah_debug.log");
+    
+    if let Ok(mut file) = OpenOptions::new()
         .create(true)
         .append(true)
-        .open("/tmp/aliyah_debug.log")
+        .open(&path)
     {
-        let now = chrono::Local::now(); 
+        let now = chrono::Local::now();
         let _ = writeln!(file, "[{}] {}", now.format("%Y-%m-%d %H:%M:%S.%3f"), msg);
     }
 }
