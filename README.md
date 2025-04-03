@@ -165,15 +165,19 @@ There are a variety of other scripts there for testing features feel free to loo
 - [x] Fix mouse input cature bug when you exit (if clicked)
 - [x] Fix help render bug
 - [x] Fix prediction timer bug
+- [ ] Add LSP context to hook functions
 - [ ] Fix logging crash 
 - [ ] Fix prediction screen text
 - [x] Make plotting more robust
+- [ ] Redo drawing logic 
+- [ ] Add more node information
 - [ ] Fix windows error for logging since `\tmp` is unix only (forgot about this)
 - [ ] Make visualization better for networks 
 - [ ] Make classic machine learning visualizations (not just networks)
 - [ ] Update examples (Make more robust examples with the new features and remove the original test examples)
     - [x] MNIST neural net 
-    - [x] MNIST VAE 
+    - [x] MNIST VAE
+    - [ ] Metal CNN | Synthetic generation of CIFAR-10 
     - [ ] Deep network 
     - [ ] Shallow network 
     - [ ] Transformer 
@@ -192,10 +196,10 @@ There are a variety of other scripts there for testing features feel free to loo
     - [ ] Custom 
     - [ ] Default 
 - [ ] User Config (Themeing)
-- [ ] Save model weights, save plots and simple metrics as nice visual jpeg, 
+- [ ] Save model weights, save plots and simple metrics as nice visual jpeg
 - [x] Publish Packages for pip, uv, and cargo 
 - [ ] Add other GPU monitoring 
-    - [ ] Test Metal 
+    - [x] Test Metal -> In progress 
     - [ ] Test NVIDIA 
     - [ ] Test AMD 
 - [x] Fix memory bug || check if its just local browser issues (was local)
@@ -240,7 +244,12 @@ cargo build
 # Install the Python package in development mode
 pip install -e python/
 ```
+#### Minimum Dev Requirements 
 
+1. Rust 
+2. Python3
+3. C & C++ compiler (gcc, g++)
+ 
 No strict code standards, just make sure your testing is thorough please.  
 
 ---
