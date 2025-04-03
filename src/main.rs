@@ -1112,48 +1112,58 @@ fn get_nvidia() -> Option<GpuInfo> {
     None
 }
 
+
+/* 
+ * Since there is no real API for us to track just going to have to do the best we can if someone
+ * is using metal/mps for the backend 
+ */
+
 fn get_metal() -> Option<GpuInfo> {
-    // Check if we're on macOS first
     #[cfg(target_os = "macos")]
     {
-        // Use the `system_profiler` command to get GPU info on macOS
+        // Try using the Activity Monitor approach
+        let ps_output = StdCommand::new("ps")
+            .args(&["-A", "-o", "%cpu,command"])
+            .output()
+            .ok()?;
+            
+        let ps_str = String::from_utf8_lossy(&ps_output.stdout);
+        
+        // Look for Python processes or direct Metal processes
+        let mut utilization = 0.0;
+        
+        for line in ps_str.lines() {
+            // Only check for Python or direct Metal processes
+            if line.contains("python") || line.contains("Metal") || line.contains("MTL") {
+                if let Some(cpu_str) = line.split_whitespace().next() {
+                    if let Ok(cpu) = cpu_str.parse::<f32>() {
+                        // If it's a direct Metal process, count it fully
+                        if line.contains("Metal") || line.contains("MTL") {
+                            utilization += cpu * 0.8;
+                        } else if line.contains("python") {
+                            // For Python processes, assume some portion is GPU work
+                            // This is a very rough estimate since we don't know for sure
+                            utilization += cpu * 0.6;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Cap at 100%
+        utilization = utilization.min(100.0);
+        
+        // Get memory information
+        let mut memory_total: u64 = 0;
         let output = StdCommand::new("system_profiler")
             .args(&["SPDisplaysDataType"])
             .output()
             .ok()?;
-
+            
         if output.status.success() {
             let output_str = String::from_utf8_lossy(&output.stdout);
             
-            // Parse the output to extract GPU information
-            // This is a simplified version - may need adjustment based on actual output format
-            let mut utilization = 0.0;
-            let mut memory_used: u64 = 0;
-            let mut memory_total: u64 = 0;
-            
-            // Try to get additional info via `ps` for GPU processes if available
-            let ps_output = StdCommand::new("ps")
-                .args(&["-A", "-o", "%cpu,command"])
-                .output()
-                .ok()?;
-                
-            if ps_output.status.success() {
-                let ps_str = String::from_utf8_lossy(&ps_output.stdout);
-                // Sum up CPU usage for Metal-related processes as an approximation
-                for line in ps_str.lines() {
-                    if line.contains("Metal") {
-                        if let Some(cpu_str) = line.split_whitespace().next() {
-                            if let Ok(cpu) = cpu_str.parse::<f32>() {
-                                utilization += cpu;
-                            }
-                        }
-                    }
-                }
-                // Cap utilization at 100%
-                utilization = utilization.min(100.0);
-            }
-            
-            // Try to extract memory information from system_profiler output
+            // Try to extract VRAM information
             if let Some(vram_line) = output_str.lines().find(|line| line.contains("VRAM")) {
                 if let Some(vram_str) = vram_line.split(':').nth(1) {
                     let vram_str = vram_str.trim();
@@ -1169,20 +1179,23 @@ fn get_metal() -> Option<GpuInfo> {
                 }
             }
             
-            // For Apple Silicon, also check Activity Monitor data or similar
-            // For this example, we'll estimate memory usage as a percentage of utilization
-            if memory_total > 0 {
-                memory_used = ((memory_total as f32) * (utilization / 100.0)) as u64;
+            // For Apple Silicon, check for unified memory
+            if memory_total == 0 && output_str.contains("Apple M") {
+                memory_total = 4 * 1024; // Assume 4GB is available
             }
-            
-            return Some(GpuInfo {
-                utilization,
-                memory_used,
-                memory_total,
-            });
         }
+        
+        // Estimate memory usage from utilization
+        let memory_used = ((memory_total as f32) * (utilization / 100.0)) as u64;
+        
+        return Some(GpuInfo {
+            utilization,
+            memory_used,
+            memory_total,
+        });
     }
     
+    #[cfg(not(target_os = "macos"))]
     None
 }
 
