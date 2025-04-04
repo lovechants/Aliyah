@@ -1,56 +1,46 @@
 # Aliyah
+Aliyah is a functional training suite for machine learning in the terminal that allows you to interact with and visualize your model as it trains!
+You can find a wrapper/hook library in `\python`.
 
----
-
-Work in progress 
-
-Being able to see to see my model train and interact with it in the terminal is important to me 
-
-Wrapper/Hook libary in `/python`
-
-
-```bash 
-aliyah <script.py> 
+```bash
+aliyah <script.py>
 ```
 
----
+## Version 0.1.0 is now available!
+[PIP / PyPi](https://pypi.org/project/aliyah/0.1.0/)
 
-## Installation 
+[Cargo / Crates.io](https://crates.io/crates/aliyah)
 
-#### Using package managers 
-```bash 
-cargo install aliyah # Rust CLI  
-pip install aliyah # Python Hook Library  
+## Installation
+#### Install with Pacakge Managers
+```bash
+cargo install aliyah # Rust
+pip install aliyah # Python
 ```
 
-#### Using curl 
+#### Install with curl
 ```bash
 curl -sSL https://raw.githubusercontent.com/lovechants/Aliyah/main/install.sh | bash
 ```
 
-#### Using python 
+#### Install with Python
 ```bash
 python -m pip install aliyah
 python -c "$(curl -sSL https://raw.githubusercontent.com/lovechants/Aliyah/main/install.py)"
 ```
 
-#### From source 
+#### Build from source
 ```bash
-git clone https://github.com/lovechants/Aliyah.git
+git clone https://github.com/lovechants/Aliyah
 cd Aliyah
 cargo build --release
 pip install -e python/
 ```
+If you're building from source, note that the `data` folder is only needed for the example scripts.
 
-data folder is for example scripts only (if building from source)
-
----
-
-## Quick Start 
-After installing the tool and library you can add monitoring to your code very simply 
-
-
-```python 
+## Quick Start
+After installation, you can easily add monitoring to your code:
+```python
 # Inside your training code
 with trainingmonitor() as monitor:
     for epoch in range(epochs):
@@ -58,99 +48,89 @@ with trainingmonitor() as monitor:
             # Your training code
             loss = ...
             accuracy = ...
-            
+
             # Log metrics
             monitor.log_batch(batch_idx, loss, accuracy)
-            
+
             # Check if user paused/stopped
             if not monitor.check_control():
                 break
-        
+
         # Log epoch metrics
         monitor.log_epoch(epoch, val_loss, val_accuracy)
 ```
 
-#### Keyboard Controls
+## Keyboard Controls
+- Q/ESC: Quit
+- P/SPACE: Pause or resume training
+- S: Stop training
+- E: Toggle error log
+- ↑/↓: Scroll error log or training log
+- C: Clear error log
+- H: Show this help page
+- TAB/N: Show node information
+- CLICK: Switch training and node panel
+- O: Output panel
 
-q/ESC : Quit
+Visualize and track more data depending on what should be sent and monitored.
+The examples in `examples` show in-depth metric tracking and visualization control.
+Full documentation for each function will eventually be provided.
+For now, please view the source code in the `/python` directory.
 
-p/SPACE: Pause/Resume training
+## Current Features
 
-s     : Stop training
+#### Real Time visualization
+See a real time visualization of your model architecture, including activations and connections between layers.
+Gain insights into each node and edge as the model learns.
 
-e     : Toggle error log
+#### Training Metrics
+Monitor key metrics appropriate for your model in real time with an interactive log and a real time chart.
+Send custom metrics between both using `**KWARG` in the associated functions.
 
-↑/↓   : Scroll error log | Scroll training log 
+#### System Resource Monitoring
+Keep track of CPU/GPU/memory usage while the model trains.
 
-c     : Clear error log
+#### Interactive Control
+Pause, resume, or stop training without killing the process.
+This allows you to have real time control throughout the entire training process.
 
-h     : Show this help
+#### Real Time Prediction
+Check on your model's current performance with the prediction panel.
 
-tab/n : Show node information 
+## Planned Features
+- User configuration
+- Layer-specific visualization
+- Advanced GPU monitoring
+- Custom metric tracking
+- Interactive parameter adjustment
+- Extended framework support
+- Advanced network visualization
+- Custom algorithm support
 
-click : Switch training and node panel
+## Framework Support
+| Framework        | Supported? |
+|------------------|------------|
+| PyTorch          | ✅         |
+| JAX              | 🚧         |
+| TensorFlow/Keras | 🚧         |
+| Scikit-Learn     | 🚧         |
+| TinyGrad         | 🚧         |
 
-o     : Output panel 
+Contributions to framework hooks and behaviors are appreciated, along with any suggestions.
 
----
+## Examples
 
-You can visualize and track more data depending on what you decide is best to send and monitor
+Check out the examples to make the most of Aliyah's features:
+- `simpleNet.py`: A simple nerual network that demonstrates training on MNIST data, active visualizations, and metric logging.
+- `example_vae.py`: An example autoencoder adapted from PyTorch, showing custom metrics, active visualizations, and a custom prediction panel.
+- `error_test.py`: A simple test to show how the error log and errors are recorded in the TUI.
 
-Examples are provided that show in-depth metric tracking and visualization control in `/examples`
+There are a variety of other scripts present for testing purposes.
+Feel free to look at them if you are using another framework besides PyTorch.
 
-Full documentation for each function is in the works, for now you can look at the source code in the `/python` directory to see what you can send 
-
----
-
-## Features
-
-#### Real time visualization 
-See real time visualization of your model architecture showing activations and connections between layers. Learn insights into each node and edge as the model learns. 
-
-#### Training Metrics 
-Monitor key metrics in accordance to your model in real time with an interactive log and real time chart. Custom metrics can be sent between both using `**KWARG` in associated functions
-
-#### System Resource Monitoring 
-Keep track of CPU usage, GPU utilization, and memory usage while the model trains
-
-#### Interactive Control 
-Pause, resume, or stop training wthout killing the process, allowing you to have real time control as your model trains. 
-
-#### Real time prediction 
-Check how your model is performing wiht the prediction panel as your model trains
-
----
-
-## Framework Support 
-
-✅ PyTorch
-
-🚧JAX
-
-🚧 TensorFlow/Keras
-
-🚧 Scikit-Learn
-
-🚧 TinyGrad
-
-
-Contributions and suggestions to framework hooks and behaviors are appreciated 
-Likewise, any framework that you'd like to see feel free to contribute or make an issue 
-
----
-
-## Examples 
-
-Checkout the examples for sample scripts and usage 
-
-- `simpleNet.py` - A simple nerual network training on MNIST data, active visualizations and metric logging 
-- `example_vae.py` - An example autoencoder adapted from PyTorch, showing custom metrics and active visualizations as well as custom prediction panel 
-- `error_test.py` - Will show how the error log & errors are recorded in the TUI 
-
-There are a variety of other scripts there for testing features feel free to look at them if using another framework outside of PyTorch 
-###### Visualization hooks differ from framework to framework so as more get implemented better examples for each supported framework will be added 
-
-
+## Example Images
+Visualization hooks differ from framework to framework.
+So, as more frameworks are supported, more examples for each framework will be added.
 ![MINST Rendering](example.png)
 ![VAE Example 1](example1.png)
 ![SimpleNet Output](example2.png)
@@ -158,81 +138,54 @@ There are a variety of other scripts there for testing features feel free to loo
 ![VAE Example 2](example4.png)
 ![VAE Output](example5.png)
 
----
-
-## Current TODO 
-
-- [x] Fix mouse input cature bug when you exit (if clicked)
-- [x] Fix help render bug
-- [x] Fix prediction timer bug
+## Current TODO
+- [ ] Context manager implementation
+- [ ] Basic GPU stats
 - [ ] Add LSP context to hook functions
-- [ ] Fix logging crash 
+- [ ] Fix logging crash
 - [ ] Fix prediction screen text
-- [x] Make plotting more robust
-- [ ] Redo drawing logic 
+- [ ] Redo drawing logic
 - [ ] Add more node information
-- [ ] Fix windows error for logging since `\tmp` is unix only (forgot about this)
-- [ ] Make visualization better for networks 
+- [ ] Make visualization better for networks
 - [ ] Make classic machine learning visualizations (not just networks)
 - [ ] Update examples (Make more robust examples with the new features and remove the original test examples)
-    - [x] MNIST neural net 
-    - [x] MNIST VAE
-    - [ ] Metal CNN | Synthetic generation of CIFAR-10 
-    - [ ] Deep network 
-    - [ ] Shallow network 
-    - [ ] Transformer 
+    - [ ] Metal CNN | Synthetic generation of CIFAR-10
+    - [ ] Deep network
+    - [ ] Shallow network
+    - [ ] Transformer
     - [ ] Algorithmic Pipeline -> PSO -> PNN (no boltzmann) [adapted from this paper](https://ieeexplore.ieee.org/document/6525976) [my implmentation](https://codeberg.org/8cu/intrusion_detection)
-        - Either show each algorithm / model indepent of each other move to the next 
+        - Either show each algorithm / model indepent of each other move to the next
         - Or show all of them at the same time running async?
-- [x] Test custom metrics
-- [ ] Fix output window match statements to be more robust (On pause or stopped script states) 
-- [ ] Make framework hooks for visualizations 
-    - [x] PyTorch 
-    - [ ] JAX 
+- [ ] Fix output window match statements to be more robust (On pause or stopped script states)
+- [ ] Make framework hooks for visualizations
+    - [ ] JAX
     - [ ] Keras
-    - [ ] TF 
+    - [ ] TF
     - [ ] TinyGrad
-    - [ ] SciKit Learn 
-    - [ ] Custom 
-    - [ ] Default 
+    - [ ] SciKit Learn
+    - [ ] Custom
+    - [ ] Default
 - [ ] User Config (Themeing)
 - [ ] Save model weights, save plots and simple metrics as nice visual jpeg
-- [x] Publish Packages for pip, uv, and cargo 
-- [ ] Add other GPU monitoring 
-    - [x] Test Metal -> In progress 
-    - [ ] Test NVIDIA 
-    - [ ] Test AMD 
-- [x] Fix memory bug || check if its just local browser issues (was local)
-
----
-
-Happy to release verion 0.1.0a 
-
-[PIP / PyPi](https://pypi.org/project/aliyah/0.1.0/)
-
-[Cargo / Crates.io](https://crates.io/crates/aliyah)
-
----
+- [ ] Add other GPU monitoring
+    - [ ] Test NVIDIA
+    - [ ] Test AMD
 
 ## Contributing to Aliyah
-
-Thank you for considering contributing to Aliyah! Here's how you can help.
-
-## Getting Started
-
-1. Fork the repository
+Thank you for considering contributing to Aliyah! Here's how you can help:
+1. Fork the repository.
 2. Clone your fork: `git clone https://github.com/your-username/Aliyah.git`
 3. Create a branch: `git checkout -b your-feature-branch`
-4. Make your changes
-5. Test your changes
+4. Make your changes.
+5. Test your changes.
 6. Commit your changes: `git commit -m "Add some feature"`
 7. Push to the branch: `git push origin your-feature-branch`
-8. Submit a pull request
+8. Submit a pull request.
 
-## Development Environment
+There are no strict coding conventions in place. But please thoroughly test all code!
 
-To set up your development environment:
-
+#### Development Environment
+Set up your development environment:
 ```bash
 # Clone the repository
 git clone https://github.com/your-username/Aliyah.git
@@ -244,73 +197,8 @@ cargo build
 # Install the Python package in development mode
 pip install -e python/
 ```
-#### Minimum Dev Requirements 
 
-1. Rust 
+#### Development Requirements
+1. Rust
 2. Python3
 3. C & C++ compiler (gcc, g++)
- 
-No strict code standards, just make sure your testing is thorough please.  
-
----
-
-Roadmap to 1.0 alpha 
-
-## 1. Core Infrastructure
-- [x] Install and set up ZMQ dependencies (Rust and Python)
-- [x] Create ZMQ context and socket management
-- [x] Implement basic message patterns
-  - [x] Command channel (REQ-REP)
-  - [x] Metrics channel (PUB-SUB)
-  - [x] Control flow channel
-
-## 2. Python Monitor Library
-- [x] Update monitor class for ZMQ
-  - [x] Command handling
-  - [x] Metric sending
-  - [x] Control flow checks
-- [ ] Context manager implementation
-- [x] Error handling and recovery
-- [x] Basic metric formatting
-- [x] Safe cleanup on exit
-
-## 3. Rust UI Updates
-- [x] ZMQ socket integration
-- [x] Command sending system
-- [x] Metric receiving and parsing
-- [x] Update existing UI components for new data flow
-- [x] Error handling and connection management
-
-## 4. Core Features for 0.1a
-- [x] Training control (pause/resume/stop)
-- [x] Basic metric display
-  - [x] Loss
-  - [x] Accuracy
-  - [x] Epoch progress
-- [x] Simple network visualization
-- [x] Resource monitoring
-  - [ ] Basic GPU stats
-  - [x] Memory usage
-  - [x] CPU usage
-
-## 5. Testing and Validation
-- [x] Basic integration tests
-- [x] Cross-platform testing
-- [x] Error recovery testing
-- [x] Example scripts
-
-## 6. Documentation
-- [x] Usage guide
-- [x] Example implementations
-- [x] Installation instructions
-- [x] Clean up codebase (again)
-
-## Future Features (Post 1.0a)
-- User configuration 
-- Layer-specific visualization
-- Advanced GPU monitoring
-- Custom metric tracking
-- Interactive parameter adjustment
-- Extended framework support
-- Advanced network visualization
-- Custom algorithm support
