@@ -153,7 +153,9 @@ So, as more frameworks are supported, more examples for each framework will be a
     - [ ] Deep network
     - [ ] Shallow network
     - [ ] Transformer
-    - [ ] Algorithmic Pipeline -> PSO -> PNN (no boltzmann) [adapted from this paper](https://ieeexplore.ieee.org/document/6525976) [my implmentation](https://codeberg.org/8cu/intrusion_detection)
+    - [ ] Algorithmic Pipeline -> PSO -> PNN (no boltzmann) 
+      [adapted from this paper](https://ieeexplore.ieee.org/document/6525976),
+      [custom implmentation](https://codeberg.org/8cu/intrusion_detection)
         - Either show each algorithm / model indepent of each other move to the next
         - Or show all of them at the same time running async?
 - [ ] Fix output window match statements to be more robust (On pause or stopped script states)
@@ -174,11 +176,11 @@ So, as more frameworks are supported, more examples for each framework will be a
 ## Contributing to Aliyah
 Thank you for considering contributing to Aliyah! Here's how you can help:
 1. Fork the repository.
-2. Clone your fork: `git clone https://github.com/your-username/Aliyah.git`
+2. Clone your fork: `git clone https://github.com/your-username/your-fork`
 3. Create a branch: `git checkout -b your-feature-branch`
 4. Make your changes.
 5. Test your changes.
-6. Commit your changes: `git commit -m "Add some feature"`
+6. Commit your changes: `git commit -m "Add feature-that-you-added"`
 7. Push to the branch: `git push origin your-feature-branch`
 8. Submit a pull request.
 
