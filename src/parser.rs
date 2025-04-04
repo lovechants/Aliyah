@@ -121,7 +121,7 @@ fn parse_pytorch_model(content: &str) -> Result<ModelArchitecture> {
         debug!("Parsed sizes - input: {:?}, output: {:?}", input_size, output_size);
         
         // Estimate parameters
-        let params_count = estimate_parameters(&layer_type, &input_size, &output_size);
+        let params_count = estimate_parameters(&layer_type, &input_size, &output_size, &params);
         total_parameters += params_count;
 
         layers.push(LayerInfo {
@@ -168,25 +168,497 @@ fn parse_layer_params(params: &str) -> (Option<Vec<usize>>, Option<Vec<usize>>) 
     (input_size, output_size)
 }
 
-fn estimate_parameters(layer_type: &str, input_size: &Option<Vec<usize>>, output_size: &Option<Vec<usize>>) -> usize {
-    match (layer_type, input_size, output_size) {
-        ("nn.Linear", Some(input), Some(output)) => {
-            let params = input[0] * output[0] + output[0];
-            debug!("Linear layer parameters: {}", params);
-            params
-        },
-        ("nn.Conv2d", Some(input), Some(output)) => {
-            if input.len() >= 2 && output.len() >= 2 {
-                let params = input[0] * input[1] * output[0] * output[1] + output[0];
-                debug!("Conv2d layer parameters: {}", params);
-                params
-            } else {
-                debug!("Invalid Conv2d dimensions");
-                0
+fn estimate_parameters(layer_type: &str, input_size: &Option<Vec<usize>>, output_size: &Option<Vec<usize>>, layer_params: &str) -> usize {
+    match layer_type {
+        "nn.Linear" => {
+            // Formula: (input_features * output_features) + output_features (bias)
+            if let (Some(input), Some(output)) = (input_size, output_size) {
+                if input.len() >= 1 && output.len() >= 1 {
+                    let params = input[0] * output[0] + output[0];
+                    debug!("Linear layer parameters: {}", params);
+                    return params;
+                }
             }
+            0
         },
+
+        "nn.Conv2d" => {
+            // Formula: (kernel_height * kernel_width * in_channels * out_channels) + out_channels (bias)
+            // The kernels used by default in Pytorch use the He initialisation from this paper: https://arxiv.org/abs/1502.01852
+            if let (Some(input), Some(output)) = (input_size, output_size) {
+                if input.len() >= 1 && output.len() >= 1 {
+                    // Extract kernel size from params if available
+                    let mut kernel_h = 3; 
+                    let mut kernel_w = 3;
+                    
+                    // Try to extract kernel size from params - safely handle regex failures
+                    if layer_params.contains("kernel_size") {
+                        if let Ok(re) = regex::Regex::new(r"kernel_size=\(?(\d+)(?:\s*,\s*(\d+))?\)?") {
+                            if let Some(caps) = re.captures(layer_params) {
+                                if let Some(h_match) = caps.get(1) {
+                                    if let Ok(h) = h_match.as_str().parse::<usize>() {
+                                        kernel_h = h;
+                                        if let Some(w_match) = caps.get(2) {
+                                            if let Ok(w) = w_match.as_str().parse::<usize>() {
+                                                kernel_w = w;
+                                            } else {
+                                                kernel_w = h; // Square kernel if w not parseable
+                                            }
+                                        } else {
+                                            kernel_w = h; // Square kernel if w not captured
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    let in_channels = input[0];
+                    let out_channels = output[0];
+                    let params = (kernel_h * kernel_w * in_channels * out_channels) + out_channels;
+                    debug!("Conv2d layer parameters: {}", params);
+                    return params;
+                }
+            }
+            0
+        },
+
+        "nn.BatchNorm2d" | "nn.BatchNorm1d" | "nn.BatchNorm3d" => {
+            // Formula: 2 * num_features (gamma, beta) + 2 * num_features (running_mean, running_var)
+            if let Some(features) = input_size.as_ref().or(output_size.as_ref()) {
+                if !features.is_empty() {
+                    let num_features = features[0];
+                    let params = 4 * num_features; // 2 for gamma/beta + 2 for running mean/var
+                    debug!("BatchNorm parameters: {}", params);
+                    return params;
+                }
+            }
+            0
+        },
+
+        "nn.ConvTranspose2d" => {
+            // Formula: (kernel_height * kernel_width * in_channels * out_channels) + out_channels (bias)
+            // Same as Conv2d but input/output channels are reversed
+            if let (Some(input), Some(output)) = (input_size, output_size) {
+                if input.len() >= 1 && output.len() >= 1 {
+                    let mut kernel_h = 3;
+                    let mut kernel_w = 3;
+                    
+                    if layer_params.contains("kernel_size") {
+                        if let Ok(re) = regex::Regex::new(r"kernel_size=\(?(\d+)(?:\s*,\s*(\d+))?\)?") {
+                            if let Some(caps) = re.captures(layer_params) {
+                                if let Some(h_match) = caps.get(1) {
+                                    if let Ok(h) = h_match.as_str().parse::<usize>() {
+                                        kernel_h = h;
+                                        if let Some(w_match) = caps.get(2) {
+                                            if let Ok(w) = w_match.as_str().parse::<usize>() {
+                                                kernel_w = w;
+                                            } else {
+                                                kernel_w = h;
+                                            }
+                                        } else {
+                                            kernel_w = h;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    let in_channels = input[0];
+                    let out_channels = output[0];
+                    let params = (kernel_h * kernel_w * in_channels * out_channels) + out_channels;
+                    debug!("ConvTranspose2d layer parameters: {}", params);
+                    return params;
+                }
+            }
+            0
+        },
+
+        "nn.Embedding" => {
+            // Formula: num_embeddings * embedding_dim
+            if let (Some(num_embeddings), Some(embedding_dim)) = (input_size, output_size) {
+                if num_embeddings.len() >= 1 && embedding_dim.len() >= 1 {
+                    let params = num_embeddings[0] * embedding_dim[0];
+                    debug!("Embedding layer parameters: {}", params);
+                    return params;
+                }
+            }
+            0
+        },
+
+        "nn.LSTMCell" => {
+            // Formula: 4 * ((input_size * hidden_size) + (hidden_size * hidden_size) + hidden_size)
+            if let (Some(input), Some(hidden)) = (input_size, output_size) {
+                if input.len() >= 1 && hidden.len() >= 1 {
+                    let input_size = input[0];
+                    let hidden_size = hidden[0];
+                    // 4 gates (input, forget, cell, output) each with input->hidden, hidden->hidden, and bias
+                    let params = 4 * ((input_size * hidden_size) + (hidden_size * hidden_size) + hidden_size);
+                    debug!("LSTMCell layer parameters: {}", params);
+                    return params;
+                }
+            }
+            0
+        },
+
+        "nn.LSTM" => {
+            // Formula for single-layer LSTM: 4 * ((input_size * hidden_size) + (hidden_size * hidden_size) + hidden_size)
+            // For multi-layer: Add (4 * ((hidden_size * hidden_size) + (hidden_size * hidden_size) + hidden_size)) for each additional layer
+            // Bidirectional doubles the total
+            if let (Some(input), Some(hidden)) = (input_size, output_size) {
+                if input.len() >= 1 && hidden.len() >= 1 {
+                    let input_size = input[0];
+                    let hidden_size = hidden[0];
+                    
+                    // Parse number of layers and bidirectional flag
+                    let mut num_layers = 1;
+                    let mut bidirectional = false;
+                    
+                    if layer_params.contains("num_layers") {
+                        if let Ok(re) = regex::Regex::new(r"num_layers=(\d+)") {
+                            if let Some(caps) = re.captures(layer_params) {
+                                if let Some(l_match) = caps.get(1) {
+                                    if let Ok(l) = l_match.as_str().parse::<usize>() {
+                                        num_layers = l;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    if layer_params.contains("bidirectional=True") {
+                        bidirectional = true;
+                    }
+                    
+                    // First layer
+                    let mut params = 4 * ((input_size * hidden_size) + (hidden_size * hidden_size) + hidden_size);
+                    
+                    // Additional layers
+                    if num_layers > 1 {
+                        params += (num_layers - 1) * 4 * ((hidden_size * hidden_size) + (hidden_size * hidden_size) + hidden_size);
+                    }
+                    
+                    // Bidirectional doubles the parameters
+                    if bidirectional {
+                        params *= 2;
+                    }
+                    
+                    debug!("LSTM layer parameters: {}", params);
+                    return params;
+                }
+            }
+            0
+        },
+
+        "nn.GRU" => {
+            // Formula for single-layer GRU: 3 * ((input_size * hidden_size) + (hidden_size * hidden_size) + hidden_size)
+            // For multi-layer: Add (3 * ((hidden_size * hidden_size) + (hidden_size * hidden_size) + hidden_size)) for each additional layer
+            // Bidirectional doubles the total
+            if let (Some(input), Some(hidden)) = (input_size, output_size) {
+                if input.len() >= 1 && hidden.len() >= 1 {
+                    let input_size = input[0];
+                    let hidden_size = hidden[0];
+                    
+                    // Parse number of layers and bidirectional flag
+                    let mut num_layers = 1;
+                    let mut bidirectional = false;
+                    
+                    if layer_params.contains("num_layers") {
+                        if let Ok(re) = regex::Regex::new(r"num_layers=(\d+)") {
+                            if let Some(caps) = re.captures(layer_params) {
+                                if let Some(l_match) = caps.get(1) {
+                                    if let Ok(l) = l_match.as_str().parse::<usize>() {
+                                        num_layers = l;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    if layer_params.contains("bidirectional=True") {
+                        bidirectional = true;
+                    }
+                    
+                    // First layer (3 gates: reset, update, new)
+                    let mut params = 3 * ((input_size * hidden_size) + (hidden_size * hidden_size) + hidden_size);
+                    
+                    // Additional layers
+                    if num_layers > 1 {
+                        params += (num_layers - 1) * 3 * ((hidden_size * hidden_size) + (hidden_size * hidden_size) + hidden_size);
+                    }
+                    
+                    // Bidirectional doubles the parameters
+                    if bidirectional {
+                        params *= 2;
+                    }
+                    
+                    debug!("GRU layer parameters: {}", params);
+                    return params;
+                }
+            }
+            0
+        },
+
+        "nn.Transformer" => {
+            // Will have to go through the docs for this one 
+            // Much rather just do custom parsing for each "block" of the transformer 
+            // Yea might have to seriously think about this one, just looking back at my GPT 
+            // Maybe will test out a few transformer exampeles any from scratch transformer
+            // Needs custom functions
+            // Formula: d_model * (2 * d_model + 4 * d_ff + 8 * num_heads) * num_layers * 2
+            if let Some(dim) = input_size.as_ref().or(output_size.as_ref()) {
+                if !dim.is_empty() {
+                    let d_model = dim[0];
+                    
+                    // Extract parameters
+                    let mut num_layers = 6; // Default Transformer values
+                    let mut num_heads = 8;
+                    let mut d_ff = 4 * d_model; // Default feed-forward dimension
+                    
+                    // Try to parse parameters
+                    if layer_params.contains("nhead") {
+                        if let Ok(re) = regex::Regex::new(r"nhead=(\d+)") {
+                            if let Some(caps) = re.captures(layer_params) {
+                                if let Some(h_match) = caps.get(1) {
+                                    if let Ok(h) = h_match.as_str().parse::<usize>() {
+                                        num_heads = h;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    if layer_params.contains("num_encoder_layers") {
+                        if let Ok(re) = regex::Regex::new(r"num_encoder_layers=(\d+)") {
+                            if let Some(caps) = re.captures(layer_params) {
+                                if let Some(l_match) = caps.get(1) {
+                                    if let Ok(l) = l_match.as_str().parse::<usize>() {
+                                        num_layers = l;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    if layer_params.contains("dim_feedforward") {
+                        if let Ok(re) = regex::Regex::new(r"dim_feedforward=(\d+)") {
+                            if let Some(caps) = re.captures(layer_params) {
+                                if let Some(d_match) = caps.get(1) {
+                                    if let Ok(d) = d_match.as_str().parse::<usize>() {
+                                        d_ff = d;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    let params = d_model * (2 * d_model + 4 * d_ff + 8 * num_heads) * num_layers * 2;
+                    debug!("Transformer layer parameters: {}", params);
+                    return params;
+                }
+            }
+            0
+        },
+
+        "nn.LayerNorm" => {
+            // Formula: 2 * normalized_shape (gamma and beta parameters)
+            if let Some(shape) = input_size.as_ref().or(output_size.as_ref()) {
+                if !shape.is_empty() {
+                    let normalized_shape = shape[0];
+                    let params = 2 * normalized_shape;
+                    debug!("LayerNorm parameters: {}", params);
+                    return params;
+                }
+            }
+            0
+        },
+
+        "nn.GroupNorm" => {
+            // Formula: 2 * num_channels (gamma and beta parameters)
+            if let Some(shape) = input_size.as_ref().or(output_size.as_ref()) {
+                if !shape.is_empty() {
+                    let num_channels = shape[0];
+                    let params = 2 * num_channels;
+                    debug!("GroupNorm parameters: {}", params);
+                    return params;
+                }
+            }
+            0
+        },
+
+        "nn.TransformerEncoder" => {
+            // Similar to transformer but only encoder part
+            if let Some(dim) = input_size.as_ref().or(output_size.as_ref()) {
+                if !dim.is_empty() {
+                    let d_model = dim[0];
+                    
+                    // Extract parameters
+                    let mut num_layers = 6; // Default
+                    let mut num_heads = 8;
+                    let mut d_ff = 4 * d_model; // Default
+                    
+                    if layer_params.contains("num_layers") {
+                        if let Ok(re) = regex::Regex::new(r"num_layers=(\d+)") {
+                            if let Some(caps) = re.captures(layer_params) {
+                                if let Some(l_match) = caps.get(1) {
+                                    if let Ok(l) = l_match.as_str().parse::<usize>() {
+                                        num_layers = l;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    if layer_params.contains("nhead") {
+                        if let Ok(re) = regex::Regex::new(r"nhead=(\d+)") {
+                            if let Some(caps) = re.captures(layer_params) {
+                                if let Some(h_match) = caps.get(1) {
+                                    if let Ok(h) = h_match.as_str().parse::<usize>() {
+                                        num_heads = h;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    if layer_params.contains("dim_feedforward") {
+                        if let Ok(re) = regex::Regex::new(r"dim_feedforward=(\d+)") {
+                            if let Some(caps) = re.captures(layer_params) {
+                                if let Some(d_match) = caps.get(1) {
+                                    if let Ok(d) = d_match.as_str().parse::<usize>() {
+                                        d_ff = d;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    let params = d_model * (2 * d_model + 4 * d_ff + 8 * num_heads) * num_layers;
+                    debug!("TransformerEncoder parameters: {}", params);
+                    return params;
+                }
+            }
+            0
+        },
+
+        "nn.Conv1d" => {
+            // Formula: (kernel_length * in_channels * out_channels) + out_channels (bias)
+            if let (Some(input), Some(output)) = (input_size, output_size) {
+                if input.len() >= 1 && output.len() >= 1 {
+                    // Extract kernel size from params if available
+                    let mut kernel_size = 3; // Default
+                    
+                    if layer_params.contains("kernel_size") {
+                        if let Ok(re) = regex::Regex::new(r"kernel_size=(\d+)") {
+                            if let Some(caps) = re.captures(layer_params) {
+                                if let Some(k_match) = caps.get(1) {
+                                    if let Ok(k) = k_match.as_str().parse::<usize>() {
+                                        kernel_size = k;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    let in_channels = input[0];
+                    let out_channels = output[0];
+                    let params = (kernel_size * in_channels * out_channels) + out_channels;
+                    debug!("Conv1d parameters: {}", params);
+                    return params;
+                }
+            }
+            0
+        },
+
+        "nn.Conv3d" => {
+            // Formula: (kernel_depth * kernel_height * kernel_width * in_channels * out_channels) + out_channels (bias)
+            if let (Some(input), Some(output)) = (input_size, output_size) {
+                if input.len() >= 1 && output.len() >= 1 {
+                    // Default 3x3x3 kernel
+                    let mut kernel_d = 3;
+                    let mut kernel_h = 3;
+                    let mut kernel_w = 3;
+                    
+                    if layer_params.contains("kernel_size") {
+                        if let Ok(re) = regex::Regex::new(r"kernel_size=\(?(\d+)(?:\s*,\s*(\d+))?(?:\s*,\s*(\d+))?\)?") {
+                            if let Some(caps) = re.captures(layer_params) {
+                                if let Some(d_match) = caps.get(1) {
+                                    if let Ok(d) = d_match.as_str().parse::<usize>() {
+                                        kernel_d = d;
+                                        
+                                        // If provided, get height or use depth as default
+                                        if let Some(h_match) = caps.get(2) {
+                                            if let Ok(h) = h_match.as_str().parse::<usize>() {
+                                                kernel_h = h;
+                                            } else {
+                                                kernel_h = d;
+                                            }
+                                        } else {
+                                            kernel_h = d;
+                                        }
+                                        
+                                        // If provided, get width or use height as default
+                                        if let Some(w_match) = caps.get(3) {
+                                            if let Ok(w) = w_match.as_str().parse::<usize>() {
+                                                kernel_w = w;
+                                            } else {
+                                                kernel_w = kernel_h;
+                                            }
+                                        } else {
+                                            kernel_w = kernel_h;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    let in_channels = input[0];
+                    let out_channels = output[0];
+                    let params = (kernel_d * kernel_h * kernel_w * in_channels * out_channels) + out_channels;
+                    debug!("Conv3d parameters: {}", params);
+                    return params;
+                }
+            }
+            0
+        },
+
+        "nn.PReLU" => {
+            // Formula: If num_parameters=1, then 1 parameter; otherwise, one per channel
+            if let Some(shape) = input_size.as_ref().or(output_size.as_ref()) {
+                if !shape.is_empty() {
+                    let num_channels = shape[0];
+                    
+                    let mut params = 1; // Default is 1 parameter
+                    
+                    if layer_params.contains("num_parameters") {
+                        if layer_params.contains("num_parameters=1") {
+                            params = 1;
+                        } else {
+                            params = num_channels;
+                        }
+                    }
+                    
+                    debug!("PReLU parameters: {}", params);
+                    return params;
+                }
+            }
+            0
+        },
+
+        // No trainable parameters in these layers
+        "nn.ReLU" | "nn.Sigmoid" | "nn.Tanh" | "nn.MaxPool1d" | "nn.MaxPool2d" | 
+        "nn.MaxPool3d" | "nn.AvgPool1d" | "nn.AvgPool2d" | "nn.AvgPool3d" | 
+        "nn.AdaptiveAvgPool1d" | "nn.AdaptiveAvgPool2d" | "nn.AdaptiveAvgPool3d" |
+        "nn.Flatten" | "nn.Dropout" | "nn.Dropout2d" | "nn.Dropout3d" => {
+            debug!("{} has no trainable parameters", layer_type);
+            0
+        },
+
         _ => {
-            debug!("Unknown layer type or missing dimensions: {}", layer_type);
+            // Default case for unknown layers
+            debug!("Unknown layer type: {}", layer_type);
             0
         }
     }
