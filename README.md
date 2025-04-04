@@ -79,22 +79,22 @@ For now, please view the source code in the `/python` directory.
 
 ## Current Features
 
-#### Real Time visualization
+#### Real Time visualization!
 See a real time visualization of your model architecture, including activations and connections between layers.
 Gain insights into each node and edge as the model learns.
 
-#### Training Metrics
+#### Training Metrics!
 Monitor key metrics appropriate for your model in real time with an interactive log and a real time chart.
 Send custom metrics between both using `**KWARG` in the associated functions.
 
-#### System Resource Monitoring
+#### System Resource Monitoring!
 Keep track of CPU/GPU/memory usage while the model trains.
 
-#### Interactive Control
+#### Interactive Control!
 Pause, resume, or stop training without killing the process.
 This allows you to have real time control throughout the entire training process.
 
-#### Real Time Prediction
+#### Real Time Prediction!
 Check on your model's current performance with the prediction panel.
 
 ## Planned Features
@@ -130,7 +130,7 @@ Feel free to look at them if you are using another framework besides PyTorch.
 
 ## Example Images
 Visualization hooks differ from framework to framework.
-So, as more frameworks are supported, more examples for each framework will be added.
+As more frameworks are supported, more images will be added here.
 ![MINST Rendering](example.png)
 ![VAE Example 1](example1.png)
 ![SimpleNet Output](example2.png)
@@ -138,7 +138,7 @@ So, as more frameworks are supported, more examples for each framework will be a
 ![VAE Example 2](example4.png)
 ![VAE Output](example5.png)
 
-## Current TODO
+## Current Todo List
 - [ ] Context manager implementation
 - [ ] Basic GPU stats
 - [ ] Add LSP context to hook functions
@@ -184,13 +184,13 @@ Thank you for considering contributing to Aliyah! Here's how you can help:
 7. Push to the branch: `git push origin your-feature-branch`
 8. Submit a pull request.
 
-There are no strict coding conventions in place. But please thoroughly test all code!
+There are no strict coding conventions in place, but please thoroughly test all code!
 
 #### Development Environment
 Set up your development environment:
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/Aliyah.git
+# Clone your fork
+git clone https://github.com/your-username/your-fork
 cd Aliyah
 
 # Build the Rust binary
