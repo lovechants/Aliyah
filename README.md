@@ -11,8 +11,18 @@ aliyah <script.py>
 
 [Cargo / Crates.io](https://crates.io/crates/aliyah)
 
+## Features
+- Real Time visualization: See a real time visualization of your model architecture, including activations and connections between layers.
+Gain insights into each node and edge as the model learns.
+- Training Metrics: Monitor key metrics appropriate for your model in real time with an interactive log and a real time chart.
+Send custom metrics between both using `**KWARG` in the associated functions.
+- System Resource Monitoring: Keep track of CPU/GPU/memory usage while the model trains.
+- Interactive Control: Pause, resume, or stop training without killing the process.
+This allows you to have real time control throughout the entire training process.
+- Real Time Prediction: Check on your model's current performance with the prediction panel.
+
 ## Installation
-#### Install with Pacakge Managers
+#### Install with Package Managers
 ```bash
 cargo install aliyah # Rust
 pip install aliyah # Python
@@ -76,26 +86,6 @@ Visualize and track more data depending on what should be sent and monitored.
 The examples in `examples` show in-depth metric tracking and visualization control.
 Full documentation for each function will eventually be provided.
 For now, please view the source code in the `/python` directory.
-
-## Current Features
-
-#### Real Time visualization!
-See a real time visualization of your model architecture, including activations and connections between layers.
-Gain insights into each node and edge as the model learns.
-
-#### Training Metrics!
-Monitor key metrics appropriate for your model in real time with an interactive log and a real time chart.
-Send custom metrics between both using `**KWARG` in the associated functions.
-
-#### System Resource Monitoring!
-Keep track of CPU/GPU/memory usage while the model trains.
-
-#### Interactive Control!
-Pause, resume, or stop training without killing the process.
-This allows you to have real time control throughout the entire training process.
-
-#### Real Time Prediction!
-Check on your model's current performance with the prediction panel.
 
 ## Planned Features
 - User configuration
