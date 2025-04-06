@@ -127,6 +127,7 @@ struct App {
     model_prediction: Option<ModelPrediction>,
     final_elapsed: Option<Duration>,
     paused_elapsed: Option<Duration>,
+    hovered_node_idx: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -278,9 +279,61 @@ impl NetworkLayout {
     // Handle updates from training
     pub fn update_forward_signal(&mut self, from_layer: usize, from_idx: usize,
                                to_layer: usize, to_idx: usize, signal: f64) {
-        if let Some(conn) = self.find_connection(from_layer, from_idx, to_layer, to_idx) {
-            conn.signal_strength = Some(signal);
-            conn.active = signal > 0.1;
+        if self.nodes.is_empty() || self.connections.is_empty() {
+            return;
+        }
+        
+        // First try to find exact nodes
+        let from_node = self.nodes.iter()
+            .find(|n| n.layer_index == from_layer && n.original_index == from_idx);
+            
+        let to_node = self.nodes.iter()
+            .find(|n| n.layer_index == to_layer && n.original_index == to_idx);
+            
+        // If we found both nodes, find the connection
+        if let (Some(from), Some(to)) = (from_node, to_node) {
+            if let Some(conn) = self.connections.iter_mut()
+                .find(|c| c.from_node_id == from.id && c.to_node_id == to.id) {
+                    
+                conn.signal_strength = Some(signal);
+                conn.active = signal > 0.01; // Lower threshold to make more connections visible
+                debug!("Updated connection directly: from=({},{}), to=({},{}), signal={:.4}, active={}",
+                       from_layer, from_idx, to_layer, to_idx, signal, conn.active);
+                return;
+            }
+        }
+        
+        // If we couldn't find exact match, try approximate matching
+        let from_nodes: Vec<_> = self.nodes.iter()
+            .filter(|n| n.layer_index == from_layer)
+            .collect();
+            
+        let to_nodes: Vec<_> = self.nodes.iter()
+            .filter(|n| n.layer_index == to_layer)
+            .collect();
+            
+        if !from_nodes.is_empty() && !to_nodes.is_empty() {
+            // Find closest nodes by original index
+            let closest_from = from_nodes.iter()
+                .min_by_key(|n| ((n.original_index as i64) - (from_idx as i64)).abs() as usize)
+                .unwrap();
+                
+            let closest_to = to_nodes.iter()
+                .min_by_key(|n| ((n.original_index as i64) - (to_idx as i64)).abs() as usize)
+                .unwrap();
+                
+            // Find and update the connection
+            if let Some(conn) = self.connections.iter_mut()
+                .find(|c| c.from_node_id == closest_from.id && c.to_node_id == closest_to.id) {
+                    
+                conn.signal_strength = Some(signal);
+                conn.active = signal > 0.01;
+                debug!("Updated approximate connection: want=({},{})->({},{}), using=({},{})->({},{}), signal={:.4}", 
+                      from_layer, from_idx, to_layer, to_idx,
+                      closest_from.layer_index, closest_from.original_index, 
+                      closest_to.layer_index, closest_to.original_index,
+                      signal);
+            }
         }
     }
 
@@ -311,92 +364,111 @@ impl NetworkLayout {
         self.connections.iter_mut()
             .find(|c| c.from_node_id == from_node.id && c.to_node_id == to_node.id)
     }
+    
+    /*
+     * This could be impacting performance TODO -> optimization check or relook at the graphing
+     * logic 
+     */
 
     pub fn draw<'a>(&'a self) -> Canvas<'a, impl Fn(&mut ratatui::widgets::canvas::Context<'_>) + 'a> {
         Canvas::default()
-            .paint(|ctx| {
-                // Draw connections with weight visualization
+            .paint(move |ctx| {
+                // Draw inactive connections first
                 for conn in &self.connections {
-                    if let (Some(from), Some(to)) = (
-                        self.nodes.iter().find(|n| n.id == conn.from_node_id),
-                        self.nodes.iter().find(|n| n.id == conn.to_node_id)
-                    ) {
-                        // Determine line thickness and color based on weight and activity
-                        let weight_abs = conn.weight.abs();
-                        let weight_intensity = ((weight_abs * 200.0) as u8).min(255);
-
-                        let color = if conn.active {
-                            if conn.weight > 0.0 {
-                                Color::Rgb(0, weight_intensity, weight_intensity) // Positive weights in cyan
-                            } else {
-                                Color::Rgb(weight_intensity, 0, 0) // Negative weights in red
-                            }
-                        } else {
-                            Color::DarkGray
-                        };
-
-                        // Draw connection line
-                        ctx.draw(&CanvasLine {
-                            x1: from.x,
-                            y1: from.y,
-                            x2: to.x,
-                            y2: to.y,
-                            color,
-                        });
-
-                        // Add signal flow animation if active
-                        if conn.active {
-                            let t = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis() as f64 / 1000.0;
-
-                            // Animate 3 particles along the connection
-                            for i in 0..3 {
-                                let phase = ((t * 2.0) + (i as f64 * 0.33)) % 1.0;
-                                let x = from.x + (to.x - from.x) * phase;
-                                let y = from.y + (to.y - from.y) * phase;
-
-                                ctx.draw(&Points {
-                                    coords: &[(x, y)],
-                                    color: if conn.weight > 0.0 {
-                                        Color::Cyan
-                                    } else {
-                                        Color::Red
-                                    },
-                                });
+                    if !conn.active {
+                        if let (Some(from), Some(to)) = (
+                            self.nodes.iter().find(|n| n.id == conn.from_node_id),
+                            self.nodes.iter().find(|n| n.id == conn.to_node_id)
+                        ) {
+                            ctx.draw(&CanvasLine {
+                                x1: from.x,
+                                y1: from.y,
+                                x2: to.x,
+                                y2: to.y,
+                                color: Color::Rgb(30, 30, 30) // Dark gray for inactive
+                            });
+                        }
+                    }
+                }
+                
+                // Draw active connections
+                for conn in &self.connections {
+                    if conn.active {
+                        if let (Some(from), Some(to)) = (
+                            self.nodes.iter().find(|n| n.id == conn.from_node_id),
+                            self.nodes.iter().find(|n| n.id == conn.to_node_id)
+                        ) {
+                            // Get signal strength for better visuals
+                            let signal = conn.signal_strength.unwrap_or(0.5);
+                            let intensity = ((signal * 200.0) as u8).min(255);
+                            
+                            // Draw the connection
+                            ctx.draw(&CanvasLine {
+                                x1: from.x,
+                                y1: from.y,
+                                x2: to.x,
+                                y2: to.y,
+                                color: if conn.weight > 0.0 {
+                                    Color::Rgb(0, intensity, intensity) // Cyan for positive weights
+                                } else {
+                                    Color::Rgb(intensity, 0, 0) // Red for negative weights
+                                }
+                            });
+                            
+                            // Add animation particles if active
+                            if signal > 0.2 {
+                                let t = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_millis() as f64 / 1000.0;
+                                    
+                                // Draw 3 particles along active connections
+                                for i in 0..3 {
+                                    let phase = ((t * 1.5) + (i as f64 * 0.33)) % 1.0;
+                                    let x = from.x + (to.x - from.x) * phase;
+                                    let y = from.y + (to.y - from.y) * phase;
+                                    
+                                    ctx.draw(&Points {
+                                        coords: &[(x, y)],
+                                        color: if conn.weight > 0.0 {
+                                            Color::Rgb(50, 205, 205) // Bright cyan
+                                        } else {
+                                            Color::Rgb(205, 50, 50) // Bright red
+                                        },
+                                    });
+                                }
                             }
                         }
                     }
                 }
 
-                // Draw nodes with more detailed visualization
-                for node in &self.nodes {
-                    // Determine node size based on type and activation
+                // Draw all nodes
+                for (idx, node) in self.nodes.iter().enumerate() {
+                    // Calculate node size
                     let base_radius = match node.node_type {
                         NodeType::Input => 0.07,
                         NodeType::Hidden => 0.06,
                         NodeType::Output => 0.07,
                     };
 
-                    // Scale radius slightly based on activation if available
+                    // Scale radius based on activation
                     let radius = if let Some(act) = node.activation {
                         base_radius * (1.0 + act.abs() * 0.5)
                     } else {
                         base_radius
                     };
-
+                    
                     // Generate points for circle
                     let points = self.generate_circle_points(node.x, node.y, radius, 16);
-
+                    
                     // Determine node color based on type and activation
                     let color = match node.node_type {
                         NodeType::Input => {
                             if let Some(act) = node.activation {
-                                let intensity = ((act * 200.0) as u8).min(255).max(100);
+                                let intensity = ((act.abs() * 200.0) as u8).min(255).max(100);
                                 Color::Rgb(100, 100, intensity) // Blue with activation intensity
                             } else {
-                                Color::Blue
+                                Color::Rgb(80, 80, 150) // Default blue for inputs
                             }
                         },
                         NodeType::Hidden => {
@@ -405,31 +477,31 @@ impl NetworkLayout {
                                     let intensity = ((act * 200.0) as u8).min(255).max(50);
                                     Color::Rgb(intensity, intensity, intensity) // White with activation intensity
                                 } else {
-                                    Color::DarkGray
+                                    Color::Rgb(60, 60, 60) // Darker gray for inactive nodes
                                 }
                             } else {
-                                Color::DarkGray
+                                Color::Rgb(60, 60, 60) // Default gray for hidden nodes
                             }
                         },
                         NodeType::Output => {
                             if let Some(act) = node.activation {
-                                let intensity = ((act * 200.0) as u8).min(255).max(100);
+                                let intensity = ((act.abs() * 200.0) as u8).min(255).max(100);
                                 Color::Rgb(0, intensity, 0) // Green with activation intensity
                             } else {
-                                Color::Green
+                                Color::Rgb(0, 150, 0) // Default green for outputs
                             }
                         }
                     };
-
+                    
                     // Draw node
                     ctx.draw(&Points {
                         coords: &points,
                         color,
                     });
 
-                    // Draw outline for activated nodes
+                    // Optional: Add outline for highly activated nodes
                     if let Some(act) = node.activation {
-                        if act.abs() > 0.3 {
+                        if act.abs() > 0.2 {
                             let outline = self.generate_circle_points(node.x, node.y, radius * 1.1, 20);
                             ctx.draw(&Points {
                                 coords: &outline,
@@ -452,6 +524,7 @@ impl NetworkLayout {
             )
         }).collect()
     }
+
     fn get_node_index(&self, pos: (usize, usize)) -> usize {
         let mut index = 0;
         for i in 0..pos.0 {
@@ -499,6 +572,65 @@ impl NetworkLayout {
         }
     }
 
+    pub fn find_nearest_node(&self, x: f64, y: f64) -> Option<usize> {
+        if self.nodes.is_empty() {
+            return None;
+        }
+        
+        // Find closest node with improved selection radius
+        let mut closest_idx = 0;
+        let mut closest_distance = f64::MAX;
+        
+        for (idx, node) in self.nodes.iter().enumerate() {
+            let distance = ((node.x - x).powi(2) + (node.y - y).powi(2)).sqrt();
+            
+            // Increase selection radius for smaller nodes to make them easier to select
+            let selection_radius = match node.node_type {
+                NodeType::Input => 0.15,   // Larger selection area for input nodes
+                NodeType::Hidden => 0.12,  // Medium selection area for hidden nodes
+                NodeType::Output => 0.15,  // Larger selection area for output nodes
+            };
+            
+            if distance < selection_radius && distance < closest_distance {
+                closest_distance = distance;
+                closest_idx = idx;
+            }
+        }
+        
+        // Return closest node if it's within selection range
+        if closest_distance < f64::MAX {
+            Some(closest_idx)
+        } else {
+            None
+        }
+    }
+    
+    /*
+    // Add visual hover effect to improve selection feedback
+    pub fn draw_hover_indicator<'a>(&'a self, hover_position: Option<(f64, f64)>) -> impl Fn(&mut ratatui::widgets::canvas::Context<'_>) + 'a {
+        move |ctx| {
+            // First draw the normal network
+            self.draw(None);
+            
+            // Then add hover indicator if applicable
+            if let Some((x, y)) = hover_position {
+                // Find the closest node to show hover effect
+                if let Some(closest_idx) = self.find_nearest_node(x, y) {
+                    let node = &self.nodes[closest_idx];
+                    
+                    // Draw hover highlight
+                    let radius = 0.15; // Larger than the node for visibility
+                    let hover_points = self.generate_circle_points(node.x, node.y, radius, 24);
+                    
+                    ctx.draw(&Points {
+                        coords: &hover_points,
+                        color: Color::Yellow, // Distinct color for hover state
+                    });
+                }
+            }
+        }
+    }
+    */
 }
 
 
@@ -528,6 +660,7 @@ impl App {
             last_viz_update: Instant::now(),
             selected_node: None,
             hover_position: None,
+            hovered_node_idx: None,
             model_prediction: None,
             show_model_output: false,
             final_elapsed: None,
@@ -547,6 +680,26 @@ impl App {
         self.show_model_output = !self.show_model_output;
     }
 
+    fn terminal_to_canvas_coords(&self, col: u16, row: u16, term_width: u16, term_height: u16) -> (f64, f64) {
+        // Terminal characters are typically ~2x taller than wide
+        // Adjust aspect ratio to compensate for non-square character cells
+        let aspect_correction = 0.5; 
+        
+        // Map to normalized -1.0 to 1.0 coordinate space with aspect correction
+        let x = (col as f64 / term_width as f64) * 2.0 - 1.0;
+        let y = ((row as f64 / term_height as f64) * 2.0 - 1.0) * aspect_correction;
+        
+        // Apply any scaling or offset from your canvas bounds
+        let (min_x, min_y, max_x, max_y) = self.network.bounds;
+        let canvas_width = max_x - min_x;
+        let canvas_height = max_y - min_y;
+        
+        let canvas_x = min_x + (x + 1.0) * 0.5 * canvas_width;
+        let canvas_y = min_y + (y + 1.0) * 0.5 * canvas_height;
+        
+        (canvas_x, canvas_y)
+    }
+
     fn set_model_prediction(&mut self, values: Vec<f64>, labels: Option<Vec<String>>, description: String){
         self.model_prediction = Some(ModelPrediction {
             epoch: self.current_epoch.unwrap_or(0),
@@ -559,55 +712,44 @@ impl App {
         self.output_lines.push("Model prediction captured".to_string());
     }
 
-
-    fn handle_mouse_event(&mut self, col: u16, row: u16, term_width: u16, term_height: u16) {
+    fn handle_mouse_move(&mut self, col: u16, row: u16, term_width: u16, term_height: u16) {
         // Convert terminal coordinates to canvas coordinates
-        let x = (col as f64 / term_width as f64) * 2.0 - 1.0;
-        let y = (row as f64 / term_height as f64) * 2.0 - 1.0;
-
+        let (x, y) = self.terminal_to_canvas_coords(col, row, term_width, term_height);
+        // Store the current mouse position
         self.hover_position = Some((x, y));
 
         // Find if we're hovering over a node
+        self.hovered_node_idx = None;
+        
         for (idx, node) in self.network.nodes.iter().enumerate() {
             let distance = ((node.x - x).powi(2) + (node.y - y).powi(2)).sqrt();
-            if distance < 0.1 {  // Node selection radius
-                self.selected_node = Some(idx);
-                return;
+            
+            // Increase the hit area for easier selection
+            let selection_radius = 0.15;  // Larger than the actual node radius for easier selection
+            
+            if distance < selection_radius {
+                self.hovered_node_idx = Some(idx);
+                break;
             }
         }
-
-        // Not hovering over any node
-        self.selected_node = None;
     }
 
     fn handle_mouse_click(&mut self, col: u16, row: u16, term_width: u16, term_height: u16) {
-        // Convert terminal coordinates to canvas coordinates
-        let x = (col as f64 / term_width as f64) * 2.0 - 1.0;
-        let y = (row as f64 / term_height as f64) * 2.0 - 1.0;
 
-        if self.network.nodes.is_empty() {
-            self.selected_node = None;
-            return;
-        }
-
-        // Find if we're clicking on a node
-        for (idx, node) in self.network.nodes.iter().enumerate() {
-            let distance = ((node.x - x).powi(2) + (node.y - y).powi(2)).sqrt();
-            if distance < 0.1 {  // Node selection radius
-                // Toggle selection - if already selected, deselect it
-                if self.selected_node == Some(idx) {
-                    self.selected_node = None;
-                } else {
-                    self.selected_node = Some(idx);
-                }
-                return;
+        let (x, y) = self.terminal_to_canvas_coords(col, row, term_width, term_height);
+        self.handle_mouse_move(col, row, term_width, term_height);
+        // Use the hovered node (if any) for selection
+        if let Some(idx) = self.hovered_node_idx {
+            // Toggle selection - if already selected, deselect it
+            if self.selected_node == Some(idx) {
+                self.selected_node = None;
+            } else {
+                self.selected_node = Some(idx);
             }
+        } else {
+            // Clicking on empty space deselects
+            self.selected_node = None;
         }
-
-        // Clicking on empty space deselects
-        self.selected_node = None;
-
-        // Check if clicking in other UI areas and react accordingly
     }
 
     fn update_network_layout(&mut self, architecture: &ModelArchitecture) {
@@ -1115,13 +1257,18 @@ fn get_nvidia() -> Option<GpuInfo> {
 
 /* 
  * Since there is no real API for us to track just going to have to do the best we can if someone
- * is using metal/mps for the backend 
+ * is using metal/mps for the backend
+ * Honestly was just messing with MPS so I can get used to it before doing any compiler graphs for
+ * ONNX + LLVM I really don't care that much about metal or mps until the API gets updated I am not
+ * doing the swift dynamic lib unless there is a nightly build because I don't feel like having
+ * anyone build the linker library and don't feel like doing anymore FFI currently 
+ * switft -> C++ -> rust I cba rn 
  */
 
 fn get_metal() -> Option<GpuInfo> {
     #[cfg(target_os = "macos")]
-    {
-        // Try using the Activity Monitor approach
+    {   
+        // Fallback to Activity Monitor-style metrics
         let ps_output = StdCommand::new("ps")
             .args(&["-A", "-o", "%cpu,command"])
             .output()
@@ -1129,30 +1276,45 @@ fn get_metal() -> Option<GpuInfo> {
             
         let ps_str = String::from_utf8_lossy(&ps_output.stdout);
         
-        // Look for Python processes or direct Metal processes
         let mut utilization = 0.0;
+        let mut seen_processes = 0;
         
+        // Look specifically for Metal GPU processes
         for line in ps_str.lines() {
-            // Only check for Python or direct Metal processes
-            if line.contains("python") || line.contains("Metal") || line.contains("MTL") {
+            if contains_metal_process(line) {
                 if let Some(cpu_str) = line.split_whitespace().next() {
                     if let Ok(cpu) = cpu_str.parse::<f32>() {
-                        // If it's a direct Metal process, count it fully
-                        if line.contains("Metal") || line.contains("MTL") {
-                            utilization += cpu * 0.8;
-                        } else if line.contains("python") {
-                            // For Python processes, assume some portion is GPU work
-                            // This is a very rough estimate since we don't know for sure
-                            utilization += cpu * 0.6;
+                        // Weight different process types differently
+                        let weight = determine_process_weight(line);
+                        utilization += cpu * weight;
+                        seen_processes += 1;
+                    }
+                }
+            }
+        }
+        
+        // If we didn't find any explicit Metal processes but PyTorch is using MPS
+        if seen_processes == 0 && is_mps_backend_active() {
+            // Look for Python processes and assume MPS activity
+            for line in ps_str.lines() {
+                if line.contains("python") {
+                    if let Some(cpu_str) = line.split_whitespace().next() {
+                        if let Ok(cpu) = cpu_str.parse::<f32>() {
+                            utilization += cpu * 0.4; 
+                            seen_processes += 1;
                         }
                     }
                 }
             }
         }
         
-        // Cap at 100%
-        utilization = utilization.min(100.0);
-        
+        // Cap and normalize utilization
+        utilization = if seen_processes > 0 { 
+            (utilization / seen_processes as f32).min(100.0) 
+        } else { 
+            0.0 
+        };
+
         // Get memory information
         let mut memory_total: u64 = 0;
         let output = StdCommand::new("system_profiler")
@@ -1181,12 +1343,22 @@ fn get_metal() -> Option<GpuInfo> {
             
             // For Apple Silicon, check for unified memory
             if memory_total == 0 && output_str.contains("Apple M") {
-                memory_total = 4 * 1024; // Assume 4GB is available
+                // Default to 4GB for Apple Silicon GPUs if no specific info
+                memory_total = 4 * 1024; 
             }
         }
         
+        // Cap and normalize utilization
+        utilization = if seen_processes > 0 { 
+            (utilization / seen_processes as f32).min(100.0) 
+        } else { 
+            0.0 
+        };
+        
         // Estimate memory usage from utilization
         let memory_used = ((memory_total as f32) * (utilization / 100.0)) as u64;
+
+
         
         return Some(GpuInfo {
             utilization,
@@ -1194,9 +1366,50 @@ fn get_metal() -> Option<GpuInfo> {
             memory_total,
         });
     }
-    
     #[cfg(not(target_os = "macos"))]
     None
+}
+
+// Helper functions 
+fn contains_metal_process(line: &str) -> bool {
+    line.contains("Metal") || 
+    line.contains("MTL") || 
+    line.contains("GPU") || 
+    line.contains("AccelerationEngine") ||
+    line.contains("GPUWorker")
+}
+
+fn determine_process_weight(line: &str) -> f32 {
+    if line.contains("python") && line.contains("mps") {
+        0.8 // High likelihood of PyTorch MPS usage
+    } else if line.contains("MetalWorker") {
+        0.9 // Direct Metal worker processes
+    } else if line.contains("GPU") {
+        0.85 // Generic GPU processes
+    } else {
+        0.5 // Other potential Metal-related processes
+    }
+}
+
+fn is_mps_backend_active() -> bool {
+    // Check for MPS environment variables or known indicators
+    std::env::var("PYTORCH_ENABLE_MPS_FALLBACK").is_ok() ||
+    std::env::var("PYTORCH_MPS_HIGH_WATERMARK_RATIO").is_ok()
+}
+
+fn get_metal_memory_info(gpu_model: Option<String>) -> (u64, u64) {
+    // IOKit can provide better memory information but requires building a swift dynamic lib 
+    // Don't care to do that right now for metal, rather just wait for API updates 
+    // For now, approximate based on device model_prediction
+
+    match gpu_model.as_deref() {
+        Some(model) if model.contains("M1 Pro") => (2 * 1024, 16 * 1024),
+        Some(model) if model.contains("M1 Max") => (4 * 1024, 32 * 1024),
+        Some(model) if model.contains("M1 Ultra") => (8 * 1024, 64 * 1024),
+        Some(model) if model.contains("M2") => (3 * 1024, 24 * 1024),
+        Some(model) if model.contains("M3") => (4 * 1024, 32 * 1024),
+        _ => (2 * 1024, 8 * 1024), // Default fallback
+    }
 }
 
 
@@ -2033,6 +2246,15 @@ fn run_app(python: PythonRunner) -> Result<()> {
                                 app.scroll_training_log(-1);
                             }
                         },
+                        event::MouseEventKind::Moved => {
+                             app.handle_mouse_move(
+                                mouse.column,
+                                mouse.row,
+                                terminal_size.width,
+                                terminal_size.height
+                            );                           
+                        },
+
                         _ => {}
                     }
                 },

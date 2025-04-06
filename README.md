@@ -1,12 +1,12 @@
 # Aliyah
 Aliyah is a functional training suite for machine learning in the terminal that allows you to interact with and visualize your model as it trains!
-You can find a wrapper/hook library in `\python`.
+You can find the associated wrapper/hook library in `\python`.
 
 ```bash
 aliyah <script.py>
 ```
 
-## Version 0.1.0 is now available!
+## Version 0.1.0 is now available
 [PIP / PyPi](https://pypi.org/project/aliyah/0.1.0/)
 
 [Cargo / Crates.io](https://crates.io/crates/aliyah)
@@ -91,11 +91,10 @@ For now, please view the source code in the `/python` directory.
 - User configuration
 - Layer-specific visualization
 - Advanced GPU monitoring
-- Custom metric tracking
 - Interactive parameter adjustment
 - Extended framework support
 - Advanced network visualization
-- Custom algorithm support
+- Custom pipeline / multimodal support
 
 ## Framework Support
 | Framework        | Supported? |
@@ -117,10 +116,10 @@ Check out the examples to make the most of Aliyah's features:
 
 There are a variety of other scripts present for testing purposes.
 Feel free to look at them if you are using another framework besides PyTorch.
+###### Visualization hooks differ from framework to framework so as more get implemented better examples for each supported framework will be added
 
 ## Example Images
 Visualization hooks differ from framework to framework.
-As more frameworks are supported, more images will be added here.
 ![MINST Rendering](example.png)
 ![VAE Example 1](example1.png)
 ![SimpleNet Output](example2.png)
@@ -145,7 +144,7 @@ As more frameworks are supported, more images will be added here.
     - [ ] Transformer
     - [ ] Algorithmic Pipeline -> PSO -> PNN (no boltzmann) 
       [adapted from this paper](https://ieeexplore.ieee.org/document/6525976),
-      [custom implmentation](https://codeberg.org/8cu/intrusion_detection)
+      [my implementation from the paper](https://codeberg.org/8cu/intrusion_detection)
         - Either show each algorithm / model indepent of each other move to the next
         - Or show all of them at the same time running async?
 - [ ] Fix output window match statements to be more robust (On pause or stopped script states)
@@ -174,7 +173,7 @@ Thank you for considering contributing to Aliyah! Here's how you can help:
 7. Push to the branch: `git push origin your-feature-branch`
 8. Submit a pull request.
 
-There are no strict coding conventions in place, but please thoroughly test all code!
+There are no strict coding conventions in place, but please thoroughly test all code.
 
 #### Development Environment
 Set up your development environment:
