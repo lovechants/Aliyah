@@ -40,18 +40,39 @@ use aliyah::ZMQServer;
 use aliyah::Command;
 
 
+const DEBUG_LOGGING: bool = false;  
 fn log_to_file(msg: &str) {
-    let mut path = std::env::temp_dir();
-    path.push("aliyah_debug.log");
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        let now = chrono::Local::now();
-        let _ = writeln!(file, "[{}] {}", now.format("%Y-%m-%d %H:%M:%S.%3f"), msg);
+    if !DEBUG_LOGGING {
+        return;  // Skip logging entirely when not debugging
+    }
+    
+    // Use a static mutex to avoid multiple file opens
+    static mut LOG_FILE: Option<std::fs::File> = None;
+    static LOG_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    
+    // Get lock to ensure thread safety
+    let _guard = LOG_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    
+    unsafe {
+        // Initialize file only once
+        if LOG_FILE.is_none() {
+            let mut path = std::env::temp_dir();
+            path.push("aliyah_debug.log");
+            LOG_FILE = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .ok();
+        }
+        
+        if let Some(file) = &mut LOG_FILE {
+            let now = chrono::Local::now();
+            let _ = writeln!(file, "[{}] {}", now.format("%Y-%m-%d %H:%M:%S.%3f"), msg);
+            let _ = file.flush();  // Ensure it's written
+        }
     }
 }
+
 
 
 #[derive(Parser)]
@@ -151,7 +172,30 @@ pub enum IPCState {
     Error(String),
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum LayerCategory {
+    Input,
+    Output,
+    Convolutional,
+    Pooling,
+    Normalization,
+    Activation,
+    Recurrent,
+    Attention,
+    Linear,
+    Embedding,
+    Dropout,
+    Other(String),  
+}
 
+#[derive(Debug, Clone)]
+pub struct NodeDetails {
+    pub operation: String,       // Specific operation (ReLU, Softmax, etc)
+    pub input_shape: Option<Vec<usize>>,
+    pub output_shape: Option<Vec<usize>>,
+    pub params_count: usize,
+    pub activation_history: Vec<f64>, // Store recent activations for mini-histograms
+}
 
 #[derive(Debug, Clone)]
 pub struct NetworkNode {
@@ -163,6 +207,8 @@ pub struct NetworkNode {
     scaled_index: usize,
     activation: Option<f64>,
     node_type: NodeType,
+    //category: LayerCategory,
+    //details: Option<NodeDetails>,
 }
 
 #[derive(Debug, Clone)]
@@ -364,94 +410,75 @@ impl NetworkLayout {
         self.connections.iter_mut()
             .find(|c| c.from_node_id == from_node.id && c.to_node_id == to_node.id)
     }
-    
-    /*
-     * This could be impacting performance TODO -> optimization check or relook at the graphing
-     * logic 
-     */
 
     pub fn draw<'a>(&'a self) -> Canvas<'a, impl Fn(&mut ratatui::widgets::canvas::Context<'_>) + 'a> {
         Canvas::default()
-            .paint(move |ctx| {
-                // Draw inactive connections first
+            .paint(|ctx| {
+                // Draw connections with weight visualization
                 for conn in &self.connections {
-                    if !conn.active {
-                        if let (Some(from), Some(to)) = (
-                            self.nodes.iter().find(|n| n.id == conn.from_node_id),
-                            self.nodes.iter().find(|n| n.id == conn.to_node_id)
-                        ) {
-                            ctx.draw(&CanvasLine {
-                                x1: from.x,
-                                y1: from.y,
-                                x2: to.x,
-                                y2: to.y,
-                                color: Color::Rgb(30, 30, 30) // Dark gray for inactive
-                            });
-                        }
-                    }
-                }
-                
-                // Draw active connections
-                for conn in &self.connections {
-                    if conn.active {
-                        if let (Some(from), Some(to)) = (
-                            self.nodes.iter().find(|n| n.id == conn.from_node_id),
-                            self.nodes.iter().find(|n| n.id == conn.to_node_id)
-                        ) {
-                            // Get signal strength for better visuals
-                            let signal = conn.signal_strength.unwrap_or(0.5);
-                            let intensity = ((signal * 200.0) as u8).min(255);
+                    if let (Some(from), Some(to)) = (
+                        self.nodes.iter().find(|n| n.id == conn.from_node_id),
+                        self.nodes.iter().find(|n| n.id == conn.to_node_id)
+                    ) {
+                        // Determine line thickness and color based on weight and activity
+                        let weight_abs = conn.weight.abs();
+                        let weight_intensity = ((weight_abs * 200.0) as u8).min(255);
+                        
+                        let color = if conn.active {
+                            if conn.weight > 0.0 {
+                                Color::Rgb(0, weight_intensity, weight_intensity) // Positive weights in cyan
+                            } else {
+                                Color::Rgb(weight_intensity, 0, 0) // Negative weights in red
+                            }
+                        } else {
+                            Color::DarkGray
+                        };
+
+                        // Draw connection line
+                        ctx.draw(&CanvasLine {
+                            x1: from.x,
+                            y1: from.y,
+                            x2: to.x,
+                            y2: to.y,
+                            color,
+                        });
+
+                        // Add signal flow animation if active
+                        if conn.active {
+                            let t = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as f64 / 1000.0;
                             
-                            // Draw the connection
-                            ctx.draw(&CanvasLine {
-                                x1: from.x,
-                                y1: from.y,
-                                x2: to.x,
-                                y2: to.y,
-                                color: if conn.weight > 0.0 {
-                                    Color::Rgb(0, intensity, intensity) // Cyan for positive weights
-                                } else {
-                                    Color::Rgb(intensity, 0, 0) // Red for negative weights
-                                }
-                            });
-                            
-                            // Add animation particles if active
-                            if signal > 0.2 {
-                                let t = std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_millis() as f64 / 1000.0;
-                                    
-                                // Draw 3 particles along active connections
-                                for i in 0..3 {
-                                    let phase = ((t * 1.5) + (i as f64 * 0.33)) % 1.0;
-                                    let x = from.x + (to.x - from.x) * phase;
-                                    let y = from.y + (to.y - from.y) * phase;
-                                    
-                                    ctx.draw(&Points {
-                                        coords: &[(x, y)],
-                                        color: if conn.weight > 0.0 {
-                                            Color::Rgb(50, 205, 205) // Bright cyan
-                                        } else {
-                                            Color::Rgb(205, 50, 50) // Bright red
-                                        },
-                                    });
-                                }
+                            // Animate 3 particles along the connection
+                            for i in 0..3 {
+                                let phase = ((t * 2.0) + (i as f64 * 0.33)) % 1.0;
+                                let x = from.x + (to.x - from.x) * phase;
+                                let y = from.y + (to.y - from.y) * phase;
+                                
+                                ctx.draw(&Points {
+                                    coords: &[(x, y)],
+                                    color: if conn.weight > 0.0 {
+                                        Color::Cyan
+                                    } else {
+                                        Color::Red
+                                    },
+                                });
                             }
                         }
                     }
                 }
 
-                // Draw all nodes
-                for (idx, node) in self.nodes.iter().enumerate() {
-                    // Calculate node size
+                // Draw nodes with more detailed visualization
+                for node in &self.nodes {
+                    // Determine node size based on type and activation
                     let base_radius = match node.node_type {
                         NodeType::Input => 0.07,
                         NodeType::Hidden => 0.06,
                         NodeType::Output => 0.07,
                     };
-
-                    // Scale radius based on activation
+                    
+                    // Scale radius slightly based on activation if available
                     let radius = if let Some(act) = node.activation {
                         base_radius * (1.0 + act.abs() * 0.5)
                     } else {
@@ -465,10 +492,10 @@ impl NetworkLayout {
                     let color = match node.node_type {
                         NodeType::Input => {
                             if let Some(act) = node.activation {
-                                let intensity = ((act.abs() * 200.0) as u8).min(255).max(100);
+                                let intensity = ((act * 200.0) as u8).min(255).max(100);
                                 Color::Rgb(100, 100, intensity) // Blue with activation intensity
                             } else {
-                                Color::Rgb(80, 80, 150) // Default blue for inputs
+                                Color::Blue
                             }
                         },
                         NodeType::Hidden => {
@@ -477,31 +504,31 @@ impl NetworkLayout {
                                     let intensity = ((act * 200.0) as u8).min(255).max(50);
                                     Color::Rgb(intensity, intensity, intensity) // White with activation intensity
                                 } else {
-                                    Color::Rgb(60, 60, 60) // Darker gray for inactive nodes
+                                    Color::DarkGray
                                 }
                             } else {
-                                Color::Rgb(60, 60, 60) // Default gray for hidden nodes
+                                Color::DarkGray
                             }
                         },
                         NodeType::Output => {
                             if let Some(act) = node.activation {
-                                let intensity = ((act.abs() * 200.0) as u8).min(255).max(100);
+                                let intensity = ((act * 200.0) as u8).min(255).max(100);
                                 Color::Rgb(0, intensity, 0) // Green with activation intensity
                             } else {
-                                Color::Rgb(0, 150, 0) // Default green for outputs
+                                Color::Green
                             }
                         }
                     };
-                    
+
                     // Draw node
                     ctx.draw(&Points {
                         coords: &points,
                         color,
                     });
-
-                    // Optional: Add outline for highly activated nodes
+                    
+                    // Draw outline for activated nodes
                     if let Some(act) = node.activation {
-                        if act.abs() > 0.2 {
+                        if act.abs() > 0.3 {
                             let outline = self.generate_circle_points(node.x, node.y, radius * 1.1, 20);
                             ctx.draw(&Points {
                                 coords: &outline,
@@ -633,7 +660,6 @@ impl NetworkLayout {
     */
 }
 
-
 impl App {
     fn new() -> App {
         App {
@@ -713,25 +739,62 @@ impl App {
     }
 
     fn handle_mouse_move(&mut self, col: u16, row: u16, term_width: u16, term_height: u16) {
-        // Convert terminal coordinates to canvas coordinates
         let (x, y) = self.terminal_to_canvas_coords(col, row, term_width, term_height);
-        // Store the current mouse position
         self.hover_position = Some((x, y));
+        self.hovered_node_idx = None; // Reset hover state
 
-        // Find if we're hovering over a node
-        self.hovered_node_idx = None;
+        // Early exit if no network to check
+        if self.network.nodes.is_empty() || self.network.layers.is_empty() {
+            return;
+        }
+
+        let total_layers = self.network.layers.len();
+        if total_layers == 0 { return; }
+
         
+        let mut closest_layer_idx = 0;
+        let mut min_dist_x = f64::MAX;
+
+        for layer_idx in 0..total_layers {
+             let layer_x = if total_layers > 1 {
+                 -0.8 + (1.6 * layer_idx as f64 / (total_layers - 1) as f64)
+             } else {
+                 0.0 // Center if only one layer
+             };
+             let dist_x = (layer_x - x).abs();
+             if dist_x < min_dist_x {
+                 min_dist_x = dist_x;
+                 closest_layer_idx = layer_idx;
+             }
+        }
+
+        let mut layers_to_check = vec![closest_layer_idx];
+        if closest_layer_idx > 0 {
+            layers_to_check.push(closest_layer_idx - 1);
+        }
+        if closest_layer_idx + 1 < total_layers {
+            layers_to_check.push(closest_layer_idx + 1);
+        }
+
+        let selection_radius: f64 = 0.15; // Keep the larger hit radius
+        let selection_radius_sq = selection_radius.powi(2); // Pre-calculate squared radius
+        let mut closest_node_dist_sq = f64::MAX;
+
+        // Iterate only over nodes in the relevant layers
         for (idx, node) in self.network.nodes.iter().enumerate() {
-            let distance = ((node.x - x).powi(2) + (node.y - y).powi(2)).sqrt();
-            
-            // Increase the hit area for easier selection
-            let selection_radius = 0.15;  // Larger than the actual node radius for easier selection
-            
-            if distance < selection_radius {
-                self.hovered_node_idx = Some(idx);
-                break;
+            // Check if the node's layer is one we care about
+            if layers_to_check.contains(&node.layer_index) {
+                // Calculate squared distance (cheaper than sqrt)
+                let dist_sq = (node.x - x).powi(2) + (node.y - y).powi(2);
+
+                // Check if within radius AND closer than the current best match
+                if dist_sq < selection_radius_sq && dist_sq < closest_node_dist_sq {
+                     closest_node_dist_sq = dist_sq;
+                     self.hovered_node_idx = Some(idx);
+                }
             }
         }
+        // We find the *closest* node within the radius in the checked layers.
     }
 
     fn handle_mouse_click(&mut self, col: u16, row: u16, term_width: u16, term_height: u16) {
@@ -1225,9 +1288,9 @@ fn get_gpu_info() -> Option<GpuInfo> {
          return Some(nvidia_info);
      }
 
-     if let Some(metal_info) = get_metal() {
-         return Some(metal_info);
-     }
+     //if let Some(metal_info) = get_metal() {
+     //    return Some(metal_info);
+     //}
 
     // TODO add AMD metrics, need an AMD card to test with 
     None
@@ -1262,8 +1325,9 @@ fn get_nvidia() -> Option<GpuInfo> {
  * ONNX + LLVM I really don't care that much about metal or mps until the API gets updated I am not
  * doing the swift dynamic lib unless there is a nightly build because I don't feel like having
  * anyone build the linker library and don't feel like doing anymore FFI currently 
- * switft -> C++ -> rust I cba rn 
- */
+ * switft -> C++ -> rust I cba rn
+ * Leave this here for now for skeleton code on any updates to metal api  
+ 
 
 fn get_metal() -> Option<GpuInfo> {
     #[cfg(target_os = "macos")]
@@ -1369,7 +1433,7 @@ fn get_metal() -> Option<GpuInfo> {
     #[cfg(not(target_os = "macos"))]
     None
 }
-
+*/
 // Helper functions 
 fn contains_metal_process(line: &str) -> bool {
     line.contains("Metal") || 
