@@ -36,7 +36,7 @@ impl PythonRunner {
         }
 
         // Start Python process
-        let mut child = Command::new("python")
+        let mut child = Command::new("python3")
             .arg(script_path)
             .args(args)
             .stdout(Stdio::piped())
