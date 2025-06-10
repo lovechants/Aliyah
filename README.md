@@ -6,7 +6,7 @@ You can find the associated wrapper/hook library in `\python`.
 aliyah <script.py>
 ```
 
-## Version 0.1.0 is now available
+## Version 0.1.1 is now available
 [PIP / PyPi](https://pypi.org/project/aliyah/0.1.0/)
 
 [Cargo / Crates.io](https://crates.io/crates/aliyah)
